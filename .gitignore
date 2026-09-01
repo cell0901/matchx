@@ -1,0 +1,22 @@
+# Rust build artifacts
+target/
+**/target/
+
+# Cargo generated files
+**/*.rs.bk
+
+# Environment files and local secrets
+.env
+.env.*
+!.env.example
+
+# Local editor/IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
