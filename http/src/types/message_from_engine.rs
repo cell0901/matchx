@@ -46,7 +46,7 @@ pub struct OnrampResponse{
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct GetBalancePayload{
+pub struct GetBalanceResponse{
     pub balance: u64
 }
 
@@ -55,7 +55,7 @@ pub enum MessageFromEngine {
     OrderPlaced(OrderPlacedPayload),
     OrderCancelled(OrderCancelledPayload),
     GetOpenOrders(GetOpenOrdersPayload),
-    Onramp(OnrampResponse),
-    GetBalance(GetBalancePayload)
+    Onramp(OnrampResponse), //  both for deposit and onramp initially
+    GetBalance(GetBalanceResponse)
     // GET_DEPTH
 }

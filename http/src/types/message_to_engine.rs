@@ -37,6 +37,12 @@ pub struct OpenOrderPayload{
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct GetBalancePayload{
+    pub asset: String,
+    pub user_id: String
+}
+
+#[derive(Serialize, Deserialize)]
 pub enum OrderSide {
     Buy,
     Sell
@@ -55,6 +61,7 @@ pub enum MessageToEngine{
     Onramp(OnrampPayload),
     Deposit(DepositPayload),
     GetOpenOrders(OpenOrderPayload),
-    GetDepth(String) // symbol
+    GetDepth(String), // symbol
+    GetBalance(GetBalancePayload)
 }
 

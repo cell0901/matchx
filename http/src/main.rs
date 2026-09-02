@@ -2,21 +2,20 @@ pub mod types;
 pub mod routes;
 pub mod redis;
 pub mod db;
+pub mod error;
+pub mod entities;
 
+use std::env;
 use std::{collections::HashMap, sync::Mutex};
 
+use sea_orm::{ Database };
 use actix_web::middleware::{ from_fn};
 use actix_web::{App,  HttpServer,  web::{ self}};
 
 use crate::redis::redis_manager::RedisManager;
 use crate::routes::{auth_middleware, deposit, get_balance, onramp};
-use crate::routes::user::{signin, signup};
-use crate::types::{Balance,    User };
-
-#[derive(Debug)]
-struct Users {
-    users: Mutex<HashMap<String, User>>  // Key is username
-}
+use crate::routes::auth::{signin, signup};
+use crate::types::{Balance };
 
 #[derive(Debug)]
 struct UserBalances{
@@ -31,24 +30,25 @@ struct UserBalances{
 async fn main() -> std::io::Result<()> {
     // Load the .env file ONCE for the entire application
     dotenvy::dotenv().expect("no .env exist");
+
+    let database_url = match env::var("DATABASE_URL") {
+        Ok(url) => url,
+        Err(e) => panic!("DATABASE_URL not found in environment: {}", e),
+    };
+
+   let db = Database::connect(database_url).await.expect("Database connection failed");
     
+    let db_conn = web::Data::new(db);
+    
+
     // init redis connection before starting server
     let r = RedisManager::new().await; 
     let redis_state = web::Data::new(r);// pass this state clone to every route
 
-    let temp  = web::Data::new(Users {
-        users: Mutex::new(HashMap::new()), // we dont need to do Arc since web::Data already does
-        // internally
-    });
-
-    let balances= web::Data::new(UserBalances {
-        user_balances: Mutex::new(HashMap::new()), // we dont need to do Arc since web::Data already does
-        // internally
-    });
-
     let server = HttpServer::new(move|| {
     App::new()
         .app_data(redis_state.clone())
+        .app_data(db_conn.clone())
         // 1. Register public routes FIRST
         .service(signin)
         .service(signup) 
@@ -60,7 +60,7 @@ async fn main() -> std::io::Result<()> {
             .service(deposit)
             .service(get_balance)
         )
-})
+    })
     .bind(("127.0.0.1", 8080))?
     .run();
     println!("listening on localhost:8080");

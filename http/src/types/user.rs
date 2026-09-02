@@ -25,8 +25,8 @@ pub struct SigninResponse{
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct JwtPayload {
-   pub username:String,
-   pub exp: usize
+   pub id:String,
+   pub exp: u64
 }
 
 

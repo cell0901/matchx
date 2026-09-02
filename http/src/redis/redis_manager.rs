@@ -1,9 +1,9 @@
 use futures_util::StreamExt;
-use redis::{AsyncCommands, Client, RedisResult, aio::{MultiplexedConnection}};
+use redis::{AsyncCommands, Client, aio::{MultiplexedConnection}};
 use serde::{Serialize};
 use uuid::Uuid;
 
-use crate::types::{message_from_engine::MessageFromEngine, message_to_engine::MessageToEngine::{self}};
+use crate::{error::EngineError, types::{message_from_engine::MessageFromEngine, message_to_engine::MessageToEngine::{self}}};
 
 #[derive(Serialize)]
 pub struct EngineMessage {
@@ -27,10 +27,13 @@ impl RedisManager {
         }
     }
 
-    pub async fn send_and_await(&self, message:MessageToEngine) -> RedisResult<MessageFromEngine>{
+    pub async fn send_and_await(&self, message:MessageToEngine) -> Result<MessageFromEngine, EngineError>{
         let mut connection = self.conn.clone();
         let client_id = self.generate_client_id(); // generate the random id for this user request
-        let mut pubsub = self.client.get_async_pubsub().await.expect("somme error while getting pubsub");
+        let mut pubsub = self.client.get_async_pubsub().await?; 
+        // ? returns RedisError so it looks for impl From<RedisError> for EngineError.
+        // EngineError::from(val)
+        // takes acutual error and format! it into string
 
         pubsub.subscribe(&client_id).await?; // sub to this id
         let mut stream= pubsub.on_message(); // gets the stream of messages from pubsub
@@ -43,7 +46,7 @@ impl RedisManager {
         let payload = serde_json::to_string(&EngineMessage {
             client_id: client_id.clone(),
             data: message
-        }).expect("error while Serialize");
+        })?;
 
         if is_query {
             // send the message to stream
@@ -55,12 +58,17 @@ impl RedisManager {
             let _: () = connection.xadd("order:stream","*", &[("data", payload)]).await?;
         };
 
+        // Wait for pubsub for message from engine
         // duration is min 2 secs from engine response until i return error to user.
-        let msg = stream.next().await.unwrap();
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
+            .await
+            .map_err(|_| EngineError::Timeout(client_id.clone()))?
+            .ok_or(EngineError::StreamClosed)?; // stream close
+             
 
         let payload: String = msg.get_payload()?;
         // recived from the pubsub
-        let from_engine: MessageFromEngine = serde_json::from_str(&payload).expect("error while parsing from engine");
+        let from_engine: MessageFromEngine = serde_json::from_str(&payload)?;
         Ok(from_engine)
     }
 

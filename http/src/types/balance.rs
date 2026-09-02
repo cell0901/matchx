@@ -18,7 +18,7 @@ pub struct DepositSchema {
 }
 
 #[derive(Serialize,Deserialize)]
-pub struct GetBalanceParam {
+pub struct GetBalanceParam{
     pub asset: String
 }
 
