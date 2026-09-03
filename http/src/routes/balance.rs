@@ -18,7 +18,7 @@ pub async fn onramp(user_id:web::ReqData<String>, body: Json<OnrampSchema>, data
         Ok(val) => HttpResponse::Ok().json(val),
         Err(err) => {
             println!("error occurrred {}", err);
-            HttpResponse::BadRequest().body("error")
+            HttpResponse::BadRequest().body("error occurrred while onramp")
         }
     }
 }
@@ -38,7 +38,7 @@ pub async fn deposit(user_id: web::ReqData<String>, body: Json<DepositSchema>, d
         Ok(val) => HttpResponse::Ok().json(val),
         Err(err) => {
             println!("error occurrred deposit{}", err);
-            HttpResponse::BadRequest().body("error")
+            HttpResponse::BadRequest().body("error occurrred while deposit")
         }
     }
 }
@@ -54,8 +54,8 @@ pub async fn get_balance(user_id:web::ReqData<String>, param: web::Query<GetBala
     match res {
         Ok(val) => HttpResponse::Ok().json(val),
         Err(err) => {
-            println!("error occurrred deposit{}", err);
-            HttpResponse::BadRequest().body("error")
+            println!("error occurrred get balance{}", err);
+            HttpResponse::BadRequest().body("unable to get balance")
         }
     }
 

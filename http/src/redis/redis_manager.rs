@@ -1,3 +1,5 @@
+use std::env;
+
 use futures_util::StreamExt;
 use redis::{AsyncCommands, Client, aio::{MultiplexedConnection}};
 use serde::{Serialize};
@@ -19,7 +21,12 @@ pub struct RedisManager {
 
 impl RedisManager {
     pub async fn new() -> Self{
-        let client = Client::open("redis://localhost:6379").unwrap();
+        let redis_url = match env::var("REDIS_URL") {
+            Ok(url) => url,
+            Err(e) => panic!("redis url not found in environment: {}", e),
+        };
+
+        let client = Client::open(redis_url).unwrap();
         let con = client.get_multiplexed_async_connection().await.expect("some error occured while getting connection"); 
         RedisManager {
             client,
@@ -48,13 +55,14 @@ impl RedisManager {
             data: message
         })?;
 
-        if is_query {
-            // send the message to stream
+        if is_query { 
+            // if the request is getorders or depth then just send to normal queue
             let _: () = connection.lpush("engine", payload).await?;  // returns length of new list
             // () since lpush returns
             // something which type needs to known even if u dont need. so we just coerce it into
             // ()
         } else {
+            // send to stream to replay data after engine restart
             let _: () = connection.xadd("order:stream","*", &[("data", payload)]).await?;
         };
 

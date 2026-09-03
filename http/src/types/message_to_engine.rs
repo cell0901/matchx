@@ -14,7 +14,8 @@ pub struct CreateOrderPayload{
 #[derive(Serialize, Deserialize)]
 pub struct CancelOrderPayload{
     pub symbol: String, 
-    pub order_id: String 
+    pub order_id: String,
+    pub user_id: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -42,13 +43,13 @@ pub struct GetBalancePayload{
     pub user_id: String
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum OrderSide {
     Buy,
     Sell
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum OrderType {
     Limit,
     Market

@@ -34,6 +34,7 @@ pub async fn signup(body: Json<UserSignup>, data: web::Data<DatabaseConnection>)
     let a= users::ActiveModel{
         id: NotSet,
         username: Set(body.username.clone()),
+        // TODO hash the password
         password: Set(body.password.clone())
     };
 
