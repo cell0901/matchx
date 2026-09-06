@@ -34,7 +34,7 @@ async fn order(user_id: web::ReqData<String>, body:Json<OrderSchema>, data:web::
         price: parsed_price,
         quantity: parsed_quantity,
         user_id: user_id.to_string(),
-        order_id: order_id.to_string()
+        order_id: order_id
         
     })).await;
     

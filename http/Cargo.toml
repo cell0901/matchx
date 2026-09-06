@@ -13,7 +13,7 @@ dotenvy = "0.15" #.env
 # db orm
 sea-orm = { version = "2.0.0", features = [ "sqlx-postgres", "runtime-tokio-native-tls", "macros" ] }
 redis = { version = "1.0.4", features = ["tokio-comp"] }
-uuid = { version = "1.14", features = ["v7"] }
+uuid = { version = "1.14", features = ["v7", "serde"] }
 futures-util = "0.3.34"
 # strgin to u64 parsing
 rust_decimal = "1.34" # or current version

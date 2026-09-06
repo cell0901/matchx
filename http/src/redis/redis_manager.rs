@@ -81,7 +81,7 @@ impl RedisManager {
     }
 
     fn generate_client_id (&self) -> String{
-        let a = Uuid::new_v4();            
+        let a = Uuid::now_v7();            
         a.to_string()
     }
 }

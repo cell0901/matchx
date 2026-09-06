@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Serialize, Deserialize)]
 pub struct CreateOrderPayload{
@@ -8,7 +9,7 @@ pub struct CreateOrderPayload{
     pub price: u64,
     pub quantity: u64,
     pub user_id: String, // authorized userId
-    pub order_id: String // random generated order id in the route
+    pub order_id: Uuid // random generated order id in the route
 }
 
 #[derive(Serialize, Deserialize)]

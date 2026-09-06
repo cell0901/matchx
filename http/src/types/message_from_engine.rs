@@ -1,6 +1,14 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::types::message_to_engine::OrderSide;
+
+#[derive(Serialize, Deserialize)]
+pub enum OrderStatus {
+    Filled,
+    PartiallyFilled,
+    Cancelled,
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct Fill{
@@ -23,9 +31,10 @@ pub struct Order{
 
 #[derive(Serialize, Deserialize)]
 pub struct OrderPlacedPayload{
-    pub order_id: String,
-    // pub executed_quantity: u64,
-    pub fills: Vec<Fill>,
+    pub order_id: Uuid,
+    pub executed_quantity: u64,
+    // pub fills: Vec<Fill>,
+    pub order_status: OrderStatus
 }
 
 #[derive(Serialize, Deserialize)]
