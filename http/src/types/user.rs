@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 
 #[derive(Debug)]
@@ -25,7 +26,7 @@ pub struct SigninResponse{
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct JwtPayload {
-   pub id:String,
+   pub id: Uuid,
    pub exp: u64
 }
 

@@ -2,6 +2,40 @@ pub mod auth;
 pub mod balance;
 pub mod order;
 
+use std::str::FromStr;
+
 pub use balance::*; // instead of importing every functoin by line in main.rs . we do this
 pub use auth::*;
 pub use order::*;
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+pub enum Asset{
+    SOL,
+    BTC,
+    ETH,
+    HYPE,
+    USDC
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Market {
+    pub base: Asset,
+    pub quote: Asset
+}
+
+impl FromStr for Market {
+   type Err = ();  // associated error type which can be returned
+
+   fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+          "SOL_USDC"=> Ok(Market {base: Asset::SOL, quote: Asset::USDC}),
+          "BTC_USDC"=> Ok(Market {base: Asset::BTC, quote: Asset::USDC}),
+          "ETH_USDC"=> Ok(Market {base: Asset::ETH, quote: Asset::USDC}),
+          "HYPE_USDC"=> Ok(Market {base: Asset::HYPE, quote: Asset::USDC}),
+            _ => Err(())
+        }
+   } 
+}
+
+

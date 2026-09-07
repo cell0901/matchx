@@ -74,7 +74,7 @@ pub async fn signin(body: Json<UserSignup>, data: web::Data<DatabaseConnection>)
                 let secret = env::var("JWT_SECRET").expect("jwtsecret must be set");
 
                 let payload = JwtPayload{
-                    id: user.id.to_string(),
+                    id: user.id,
                     // 7 days from login 
                     exp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()+ 7 * 24 * 60 * 60
                 };

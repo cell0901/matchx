@@ -1,47 +1,49 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::routes::Market;
+
 #[derive(Serialize, Deserialize)]
 pub struct CreateOrderPayload{
-    pub symbol: String, // SOL_USD, ETH_USD, BTC_USD
+    pub symbol: Market, // SOL_USD, ETH_USD, BTC_USD
     pub order_type: OrderType, // market/ limit
     pub order_side: OrderSide, // buy or sell
     pub price: u64,
     pub quantity: u64,
-    pub user_id: String, // authorized userId
+    pub user_id: Uuid, // authorized userId
     pub order_id: Uuid // random generated order id in the route
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct CancelOrderPayload{
-    pub symbol: String, 
+    pub symbol: Market, 
     pub order_id: String,
-    pub user_id: String,
+    pub user_id: Uuid,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct OnrampPayload { // the usd balance
+pub struct OnrampPayload { // the usdc balance
     pub amount: u64,
-    pub user_id: String
+    pub user_id: Uuid 
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct DepositPayload{
-    pub asset: String,
+    pub asset: String, // should be Asset type
     pub quantity: u64,
-    pub user_id: String
+    pub user_id: Uuid 
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct OpenOrderPayload{
-    pub symbol: String,
-    pub user_id: String
+    pub symbol: Market,
+    pub user_id: Uuid 
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct GetBalancePayload{
     pub asset: String,
-    pub user_id: String
+    pub user_id: Uuid 
 }
 
 #[derive(Serialize, Deserialize, Clone)]

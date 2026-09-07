@@ -2,10 +2,10 @@ use actix_web::{HttpResponse, Responder, delete, get, post, web::{self, Json}};
 use uuid::Uuid;
 use rust_decimal::prelude::*;
 
-use crate::{SCALE_FACTOR, redis::redis_manager::RedisManager, types::{CancelOrderSchema, OpenOrderSchema, OrderSchema, message_to_engine::{CancelOrderPayload, CreateOrderPayload, MessageToEngine, OpenOrderPayload}}};
+use crate::{SCALE_FACTOR, redis::redis_manager::RedisManager, routes::Market, types::{CancelOrderSchema, OpenOrderSchema, OrderSchema, message_to_engine::{CancelOrderPayload, CreateOrderPayload, MessageToEngine, OpenOrderPayload}}};
 
 #[post("/order")]
-async fn order(user_id: web::ReqData<String>, body:Json<OrderSchema>, data:web::Data<RedisManager> ) -> impl Responder{
+async fn order(user_id: web::ReqData<Uuid>, body:Json<OrderSchema>, data:web::Data<RedisManager> ) -> impl Responder{
     let order_id = Uuid::now_v7();    
 
     let parsed_price = match string_to_64(body.price.as_str()) {
@@ -27,13 +27,19 @@ async fn order(user_id: web::ReqData<String>, body:Json<OrderSchema>, data:web::
         }
     };
 
+    let market = body.symbol.parse::<Market>().map_err(|_| format!("invalid market"));
+    
+    if let Err(err) = market {
+        return HttpResponse::BadRequest().json(err);
+    };
+
     let res = data.send_and_await(MessageToEngine::CreateOrder(CreateOrderPayload {
-        symbol: body.symbol.clone(),
+        symbol: market.unwrap(),
         order_type: body.order_type.clone(),
         order_side: body.order_side.clone(),
         price: parsed_price,
         quantity: parsed_quantity,
-        user_id: user_id.to_string(),
+        user_id: *user_id,
         order_id: order_id
         
     })).await;
@@ -51,13 +57,17 @@ async fn order(user_id: web::ReqData<String>, body:Json<OrderSchema>, data:web::
 }
 
 #[delete("/cancel-order")]
-async fn cancel_order(user_id:web::ReqData<String>, body:Json<CancelOrderSchema>, data: web::Data<RedisManager> ) -> impl Responder{
+async fn cancel_order(user_id:web::ReqData<Uuid>, body:Json<CancelOrderSchema>, data: web::Data<RedisManager> ) -> impl Responder{
     // cancells the sitting order on the orderbook. even if it is partially or zero filled 
-
+    let market = body.symbol.parse::<Market>().map_err(|_| format!("invalid market"));
+    
+    if let Err(err) = market {
+        return HttpResponse::BadRequest().json(err);
+    };
     let res = data.send_and_await(MessageToEngine::CancelOrder(CancelOrderPayload {
-        symbol: body.symbol.clone(),
+        symbol: market.unwrap(),
         order_id: body.order_id.clone(),
-        user_id: user_id.to_string()
+        user_id: *user_id
     })).await;
 
     match res {
@@ -72,11 +82,17 @@ async fn cancel_order(user_id:web::ReqData<String>, body:Json<CancelOrderSchema>
 }
 
 #[get("/open-orders")]
-async fn get_orders (user_id:web::ReqData<String> , body: Json<OpenOrderSchema>, data: web::Data<RedisManager>) -> impl Responder{
-     
+async fn get_orders (user_id:web::ReqData<Uuid> , body: Json<OpenOrderSchema>, data: web::Data<RedisManager>) -> impl Responder{
+
+    let market = body.symbol.parse::<Market>().map_err(|_| format!("invalid market"));
+    
+    if let Err(err) = market {
+        return HttpResponse::BadRequest().json(err);
+    };
+
     let res = data.send_and_await(MessageToEngine::GetOpenOrders(OpenOrderPayload {
-            symbol: body.symbol.clone(),
-            user_id: user_id.to_string()
+            symbol: market.unwrap(),
+            user_id: *user_id
     })).await;
 
     match res {
