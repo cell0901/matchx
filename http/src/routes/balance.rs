@@ -1,7 +1,7 @@
 use actix_web::{HttpResponse, Responder, get, post, web::{self, Json}};
 use uuid::Uuid;
 
-use crate::{ redis::redis_manager::RedisManager, types::{ DepositSchema, GetBalanceParam,  OnrampSchema, 
+use crate::{ redis::redis_manager::RedisManager, routes::Asset, types::{ DepositSchema, GetBalanceParam,  OnrampSchema, 
     message_to_engine::{DepositPayload, GetBalancePayload, MessageToEngine, OnrampPayload}}};
 
 #[post("/balance/onramp")]
@@ -28,8 +28,14 @@ pub async fn onramp(user_id:web::ReqData<Uuid>, body: Json<OnrampSchema>, data: 
 pub async fn deposit(user_id: web::ReqData<Uuid>, body: Json<DepositSchema>, data: web::Data<RedisManager>) -> impl Responder{
     // impl logic of user sending asset to that address and increase the balance here after
     
+    let asset = body.asset.parse::<Asset>().map_err(|_| format!("Invalid asset"));
+
+    if let Err(err) = asset {
+        return HttpResponse::BadRequest().json(err);
+    };
+
     let res = data.send_and_await(MessageToEngine::Deposit(DepositPayload {
-        asset: body.asset.clone(), // clone since body doesnt own the schema its Json which doesnt
+        asset: asset.unwrap(), // clone since body doesnt own the schema its Json which doesnt
         // have Deref
         quantity: body.quantity,
         user_id: *user_id
@@ -46,9 +52,14 @@ pub async fn deposit(user_id: web::ReqData<Uuid>, body: Json<DepositSchema>, dat
 
 #[get("/balance")]
 pub async fn get_balance(user_id:web::ReqData<Uuid>, param: web::Query<GetBalanceParam>, data: web::Data<RedisManager>) -> impl Responder{
+    let asset = param.asset.parse::<Asset>().map_err(|_| format!("Invalid asset"));
+
+    if let Err(err) = asset {
+        return HttpResponse::BadRequest().json(err);
+    };
 
      let res = data.send_and_await(MessageToEngine::GetBalance(GetBalancePayload {
-        asset: param.asset.clone(), // query param
+        asset: asset.unwrap(), // query param
         user_id: *user_id
     })).await;
 

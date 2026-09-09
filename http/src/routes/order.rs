@@ -32,11 +32,13 @@ async fn order(user_id: web::ReqData<Uuid>, body:Json<OrderSchema>, data:web::Da
     if let Err(err) = market {
         return HttpResponse::BadRequest().json(err);
     };
+    // add a overflow check before sending to engine to make sure user doesnt send very big amount
 
     let res = data.send_and_await(MessageToEngine::CreateOrder(CreateOrderPayload {
         symbol: market.unwrap(),
         order_type: body.order_type.clone(),
         order_side: body.order_side.clone(),
+        // price and quantity are both multiplied by SCALE_FACTOR 10^8 to avoid float errors
         price: parsed_price,
         quantity: parsed_quantity,
         user_id: *user_id,

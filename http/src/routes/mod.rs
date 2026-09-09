@@ -8,8 +8,9 @@ pub use balance::*; // instead of importing every functoin by line in main.rs . 
 pub use auth::*;
 pub use order::*;
 use serde::{Deserialize, Serialize};
+use strum::EnumString;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, EnumString)]
 pub enum Asset{
     SOL,
     BTC,

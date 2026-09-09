@@ -1,6 +1,9 @@
 use std::{collections::{BTreeMap, HashMap, VecDeque}};
 
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+use crate::{trade::Asset, types::{OrderSide, OrderType}};
 
 pub type Price= u64;
 pub type CurrentPrice= u64;
@@ -8,15 +11,21 @@ pub type CurrentPrice= u64;
 pub struct Fill{
     pub price: u64,
     pub quantity: u64,
-    pub user_id: String,
-    pub other_user_id: String
+    pub user_id: Uuid,
+    pub other_user_id: Uuid
+}
+
+#[derive(Clone, PartialEq, Eq, Copy, Hash, Deserialize, Serialize)]
+pub struct Market {
+    pub base: Asset,
+    pub quote: Asset
 }
 
 #[derive(Clone)]
 pub struct Order{
     pub order_id: Uuid,
     pub price: Price,
-    pub user_id: String,
+    pub user_id: Uuid,
     pub quantity: u64,
     pub order_side: OrderSide,
     pub order_type: OrderType, // mostly the order type will limit. order but we still added the
@@ -24,16 +33,6 @@ pub struct Order{
     pub filled: u64 // how much quantity filled
 }
 
-#[derive(Clone)]
-pub enum OrderType {
-    Limit,
-    Market
-}
-#[derive(Clone)]
-pub enum OrderSide {
-    Buy,
-    Sell
-}
 
 pub enum OrderStatus {
     New, // no match found sitting on orderbook
@@ -43,7 +42,7 @@ pub enum OrderStatus {
 }
 
 pub struct Orderbook{
-    pub market: String, // SOL, BTC etc
+    pub market: Market, // SOL, BTC etc
     pub bids: BTreeMap<Price, VecDeque<Order>>, //  but this needs to be .iter().rev() 
     pub asks: BTreeMap<Price, VecDeque<Order>>, // this is ok key is lowest to highest
     pub current_price: CurrentPrice,
@@ -58,7 +57,7 @@ pub struct OrderLocation{
 }
 
 impl Orderbook{
-   pub fn new (market: String) -> Self {
+   pub fn new (market: Market) -> Self {
         Orderbook {
             market,
             bids: BTreeMap::new(),
@@ -69,29 +68,31 @@ impl Orderbook{
         }
    }
 
-    pub fn add_order(&mut self, order: Order) {
+    pub fn add_order(&mut self, order: Order) -> (u64, OrderStatus, Vec<Fill>) {
        match order.order_type {
             OrderType::Limit => {
-                self.fill_limit_order(order);
+                return self.fill_limit_order(order)
             },
             OrderType::Market => {
-                println!("market order hit. implement function for this")
+                // IOC. if no order otherside then Cancelled. else partial and full fills.
+                println!("market order hit. implement function for this");
+                return  (4 as u64, OrderStatus::Cancelled, vec![])
             }
        };
     }
 
-    fn fill_limit_order(&mut self, order: Order) -> (u64, OrderStatus){
+    fn fill_limit_order(&mut self, order: Order) -> (u64, OrderStatus, Vec<Fill>){
         match order.order_side {
             OrderSide::Buy => {
                 let mut order_status = OrderStatus::New;
                 let (executed_qty, fills) = self.match_bid(order.clone());  // from all those
                 
-                // TODO ADD balance chagnes
+                // TODO ADD balance changes 
                 
                 // do something with fills like balance changes etc
                 if executed_qty == order.quantity {
                     // return executed_quantity nd order status (Filled)
-                    return (executed_qty, OrderStatus::Filled);
+                    return (executed_qty, OrderStatus::Filled, fills);
                 }
 
                 // if value for this key doesnt exist then insert with empty VecDeque. else return
@@ -104,14 +105,14 @@ impl Orderbook{
                 if executed_qty > 0 {
                     order_status = OrderStatus::PartiallyFilled;
                 } 
-                return (executed_qty , order_status);
+                return (executed_qty , order_status, fills);
             },
             OrderSide::Sell => {
                 let mut order_status = OrderStatus::New;
 
                 let (executed_qty, fills) = self.match_ask(order.clone()); 
                 if executed_qty == order.quantity {
-                    return (executed_qty, OrderStatus::Filled);
+                    return (executed_qty, OrderStatus::Filled, fills);
                 }
                 let a = self.bids.entry(order.price)
                     .or_insert_with(|| VecDeque::new());
@@ -120,7 +121,7 @@ impl Orderbook{
                 if executed_qty> 0 {
                     order_status = OrderStatus::PartiallyFilled;
                 } 
-                return (executed_qty, order_status);
+                return (executed_qty, order_status, fills);
             }
         }
     }
@@ -151,8 +152,8 @@ impl Orderbook{
                 fills.push(Fill {
                     price: best_ask_price,
                     quantity: trade_qty,
-                    user_id: order.user_id.clone(),
-                    other_user_id: resting_ask.user_id.clone()
+                    user_id: order.user_id,
+                    other_user_id: resting_ask.user_id
                 });
                 
                 self.last_trade_id += 1; // on each fill
@@ -202,8 +203,8 @@ impl Orderbook{
                 fills.push(Fill {
                     price: best_bid_price,
                     quantity: trade_qty,
-                    user_id: order.user_id.clone(),
-                    other_user_id: resting_bid.user_id.clone()
+                    user_id: order.user_id,
+                    other_user_id: resting_bid.user_id
                 });
 
                 self.last_trade_id += 1; // on each fill
