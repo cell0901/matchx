@@ -3,7 +3,7 @@ use std::{collections::{BTreeMap, HashMap, VecDeque}};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{trade::Asset, types::{OrderSide, OrderType}};
+use crate::{error::EngineError, trade::Asset, types::{OrderSide, OrderType}};
 
 pub type Price= u64;
 pub type CurrentPrice= u64;
@@ -225,5 +225,48 @@ impl Orderbook{
             }
         }
         (order.quantity - remaining_quantity, fills) // executed_quantity and fills
+    }
+
+    pub fn cancel_order(&mut self, order_id: Uuid, user_id: Uuid ) -> Result<Order, EngineError> { // returnns
+        // filled quantity
+        let location = self.order_index.get(&order_id).ok_or(EngineError::OrderNotFound)?.clone();
+
+        let cancelled_order;
+        let side = match location.side {
+            OrderSide::Buy => &mut self.bids,
+            OrderSide::Sell=> &mut self.asks,
+        };
+
+
+        let level = side.get_mut(&location.price).ok_or(EngineError::OrderNotFound)?; // this should
+        // exist. because we already add a check before to check in order_index
+
+        // in that level find the order_id index that matches
+        let pos = level.iter().position(|o| o.order_id == order_id);
+
+        match pos {
+            Some(index) => {
+                let order = &level[index];
+                if order.user_id != user_id {
+                    return  Err(EngineError::Unauthorized); // dont let other users cancel other's
+                    // orders
+                }
+                cancelled_order = order.clone();
+                level.remove(index); // remove from VecDeque
+            },
+            None =>  {
+                return  Err(EngineError::OrderNotFound); // dont let other users cancel other's
+            }
+        }
+
+        if level.is_empty() {
+            side.remove(&location.price); // if after removing the order. the level is empty then
+            // remove the price level
+        }
+
+        // also clean order_index entry
+        self.order_index.remove(&order_id);
+
+        Ok(cancelled_order)
     }
 }

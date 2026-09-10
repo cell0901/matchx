@@ -2,7 +2,8 @@ use std::{collections::HashMap, num::TryFromIntError, thread};
 use crossbeam_channel::{RecvError, Sender, bounded, unbounded};
 use rustc_hash::FxHashMap;
 use uuid::Uuid;
-use crate::{trade::{Asset, BalanceActions, Fill, MARKETS, Market, Order, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult, ValidateAndLockData, ValidateAndLockResponse}, types::{MessageFromApi, OrderSide}};
+use crate::{trade::{Asset, BalanceActions, MARKETS,
+    Market, Order, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse}, types::{MessageFromApi, OrderSide}};
 
 pub struct Balance {
     pub available: u64,
@@ -63,6 +64,23 @@ impl Engine {
                         // return order rejected. invalid market
                     }
                 };
+            },
+            MessageFromApi::CancelOrder(payload) => {
+                let market = payload.symbol;
+                let orderbook = self.market_senders.get(&market);
+
+                match orderbook {
+                    Some(sender)  => {
+                        if let Err(e) = sender.send(OrderbookActions::CancelOrder(payload)) {
+                            println!("market thread unreachable {}", e);
+                            // early return to api. order rejected, market unavailable
+                        };
+                        // wait on orderbook response
+                    },
+                    None => {
+                        // return order rejected. invalid market
+                    }
+                }
             }
         };
     }
@@ -182,9 +200,34 @@ fn spawn_balance_thread() -> Sender<BalanceActions> {
                             balances.entry((fill.other_user_id, data.base_asset)).or_insert(Balance::default()).available += fill.quantity;
                         }
                     }
-                    // send Settle:ok
-                    data.resp.send(SettleResult::Ok);
-                }
+                    // send Settle::Success
+                    data.resp.send(SettleResult::Success);
+                },
+                BalanceActions::CancelAndUpdateBalance(order, symbol, resp) => {
+                    if order.order_side == OrderSide::Buy {
+                        let notional = calc_quote_amount(order.price, order.quantity - order.filled);
+                        match notional {
+                            Ok(left_qty_price) => {
+                                if let Some(bal) = balances.get_mut(&(order.user_id, symbol.quote)) {
+                                    bal.available += left_qty_price;
+                                    bal.locked -= left_qty_price;
+                                    resp.send(SettleResult::Success);
+                                }
+                            },
+                            Err(e) => {
+                                eprintln!("overflow error {}", e);
+                                resp.send(SettleResult::Overflow);
+                            }
+                        };
+
+                    } else { // if sell was cancelled increase base_asset avlbl amount
+                        if let Some(bal) = balances.get_mut(&(order.user_id, symbol.base)) {
+                            bal.available += order.quantity - order.filled;
+                            bal.locked -= order.quantity - order.filled;
+                            resp.send(SettleResult::Success);
+                        }
+                    }
+                },
             };
         }
         });
@@ -209,7 +252,7 @@ fn spawn_market_thread(market:Market, balance_trasmitter: Sender<BalanceActions>
                OrderbookActions::CreateOrder(payload) => {
                     // validate and lock funds
                     let res = validate_and_lock(payload.user_id, payload.price, payload.quantity, 
-                        payload.order_side, payload.symbol, balance_trasmitter.clone());
+                        payload.order_side.clone(), payload.symbol, balance_trasmitter.clone());
 
                     match res {
                         Ok(ValidateAndLockResponse::Success) => { // if success create order and
@@ -220,11 +263,11 @@ fn spawn_market_thread(market:Market, balance_trasmitter: Sender<BalanceActions>
                                 price: payload.price,
                                 user_id: payload.user_id,
                                 quantity: payload.quantity,
-                                order_side: payload.order_side,
+                                order_side: payload.order_side.clone(),
                                 order_type: payload.order_type,
                                 filled: 0
                             };
-                            let (executed_qty,order_status, fills) = orderbook.add_order(order); // get the fills and change balances
+                            let (executed_qty, order_status, fills) = orderbook.add_order(order); // get the fills and change balances
                             balance_trasmitter.clone().send(BalanceActions::SettleFills(SettleFillsData {
                                 fills,
                                 side: payload.order_side,
@@ -235,7 +278,7 @@ fn spawn_market_thread(market:Market, balance_trasmitter: Sender<BalanceActions>
 
                             if let Ok(val) = balance_settle_rx.recv() { // wait till balance thread
                                 // update funds
-                                if val == SettleResult::Ok {
+                                if val == SettleResult::Success {
                                     // return order success created with executed_qty and
                                     // order_status
                                 }
@@ -251,11 +294,31 @@ fn spawn_market_thread(market:Market, balance_trasmitter: Sender<BalanceActions>
                         },
                         Err(err) => {
                             eprintln!("balance thread is unreachable, recv error {}", err);
-
                         }
                     };
-                    
-               }
+               },
+                OrderbookActions::CancelOrder(payload) => {
+                    let res = orderbook.cancel_order(payload.order_id, payload.user_id);
+                    match res {
+                        Ok(cancelled_order)  => { // if removed successfully. then update balances
+                            let (update_balance_tx, update_balance_rx) = bounded::<SettleResult>(1);
+
+                            balance_trasmitter.clone().send(BalanceActions::CancelAndUpdateBalance(cancelled_order, payload.symbol, update_balance_tx));
+                            if let Ok(val) = update_balance_rx.recv() { // wait till balance thread
+                                if val == SettleResult::Success {
+                                    // return cancelled_order with order_id and remaining quantity
+                                }
+                            } else {
+                                println!("balance thread recv Error");
+                            }
+                        },
+                        Err(_) => { 
+                            // send response back with acutual erro message
+
+                        }
+
+                    };
+                },
             };
         }
     });

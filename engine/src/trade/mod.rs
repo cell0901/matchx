@@ -7,7 +7,7 @@ pub use engine::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::types::{CreateOrderPayload, OrderSide};
+use crate::types::{CancelOrderPayload, CreateOrderPayload, OrderSide};
 
 pub const SCALE_FACTOR: u64= 100_000_000;
 
@@ -41,7 +41,8 @@ pub enum Asset{
 
 pub enum BalanceActions {
     ValidateAndLockFunds(ValidateAndLockData),
-    SettleFills(SettleFillsData)
+    SettleFills(SettleFillsData),
+    CancelAndUpdateBalance(Order, Market, Sender<SettleResult>) // using same enum for now
 }
 
 pub enum ValidateAndLockResponse{
@@ -53,7 +54,7 @@ pub enum ValidateAndLockResponse{
 #[derive(PartialEq, Eq)]
 pub enum SettleResult {// this will alawys be success since prevalidate before order. unless there
     // is some overflow u64 error
-    Ok,
+    Success,
     Overflow
 }
 
@@ -64,6 +65,7 @@ pub struct SettleFillsData {
     quote_asset: Asset,
     resp: Sender<SettleResult>
 }
+
 
 pub struct ValidateAndLockData{
     user_id: Uuid,
@@ -77,5 +79,5 @@ pub struct ValidateAndLockData{
 
 pub enum OrderbookActions{
     CreateOrder(CreateOrderPayload),
-    CancelOrder
+    CancelOrder(CancelOrderPayload)
 }

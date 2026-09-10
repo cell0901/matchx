@@ -47,7 +47,7 @@ pub struct CreateOrderPayload{
 #[derive(Serialize, Deserialize)]
 pub struct CancelOrderPayload{
     pub symbol: Market, 
-    pub order_id: String,
+    pub order_id: Uuid,
     pub user_id: Uuid,
 }
 

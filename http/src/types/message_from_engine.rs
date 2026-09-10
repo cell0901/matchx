@@ -20,12 +20,12 @@ pub struct Fill{
 
 #[derive(Serialize, Deserialize)]
 pub struct Order{
-    pub user_id: String,
+    pub user_id: Uuid,
     pub price: u64,
     pub quantity: u64,
     pub side: OrderSide,
     pub filled: u64,
-    pub order_id: String
+    pub order_id: Uuid 
 }
 
 
@@ -39,7 +39,7 @@ pub struct OrderPlacedPayload{
 
 #[derive(Serialize, Deserialize)]
 pub struct OrderCancelledPayload{
-    pub order_id: String,
+    pub order_id: Uuid,
     pub executed_quantity: u64,
     pub remaining_quantity: u64
 }

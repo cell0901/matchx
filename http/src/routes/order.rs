@@ -66,9 +66,18 @@ async fn cancel_order(user_id:web::ReqData<Uuid>, body:Json<CancelOrderSchema>, 
     if let Err(err) = market {
         return HttpResponse::BadRequest().json(err);
     };
+
+    let order_id = match Uuid::parse_str(&body.order_id) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("failed to parse Uuid: {}", e);
+            return HttpResponse::BadRequest().json("Wrong order_id sent");
+        }
+    };
+
     let res = data.send_and_await(MessageToEngine::CancelOrder(CancelOrderPayload {
         symbol: market.unwrap(),
-        order_id: body.order_id.clone(),
+        order_id: order_id,
         user_id: *user_id
     })).await;
 

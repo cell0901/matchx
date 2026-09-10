@@ -9,7 +9,9 @@ use crossbeam_channel::RecvError;
 pub enum EngineError {
     Redis(String), // for any RedisError type
     Serde(String),
-    StreamClosed
+    StreamClosed,
+    OrderNotFound,
+    Unauthorized
 }
 
 #[derive(Debug)]
