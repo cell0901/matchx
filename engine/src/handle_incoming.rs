@@ -6,7 +6,7 @@ pub async fn handle_stream(client: Client, engine: Engine) -> Result<(), EngineE
     let mut con = client.get_multiplexed_async_connection().await?; // using async connection to
     // avoid blocking io
 
-    // only diff between default xgropu create is that this one creates the stream if it doesnt
+    // diff between default xgropu create is that this one creates the stream if it doesnt
     // exists instead of panic
     let _: Result<(), _> = con.xgroup_create_mkstream("order:stream", "engine_group", "$").await; // $
     // means start the group for only 
@@ -19,7 +19,7 @@ pub async fn handle_stream(client: Client, engine: Engine) -> Result<(), EngineE
     let res: StreamReadReply =  con.xread_options(&["order:stream"], &[">"], &ops).await?; // >
     // only new, undelivered messages
         
-        for stream_key in res.keys {
+        for stream_key in res.keys { // currently only one stream key
            for entry in stream_key.ids {
                 let data = entry.map.get("data").unwrap();
 
@@ -44,6 +44,16 @@ pub async fn handle_stream(client: Client, engine: Engine) -> Result<(), EngineE
     }
 }
 
-pub async fn handle_queue(client: Client, engine:Engine) {
+pub async fn handle_queue(client: Client, engine:Engine)-> Result<(), EngineError> {
+    let mut con = client.get_multiplexed_async_connection().await?; // using async connection to
 
+    let res: Option<(String,String)> = con.brpop("engine:queue", 0.0).await?;
+
+    if let Some((_, message)) =  res {
+        let message: EngineMessage = serde_json::from_str(&message).unwrap();
+        engine.process(message.data);
+    } else {
+        println!("error while getting queue item");
+    }
+    Ok(())
 }

@@ -65,7 +65,7 @@ pub enum MessageToEngine{
     Onramp(OnrampPayload),
     Deposit(DepositPayload),
     GetOpenOrders(OpenOrderPayload),
-    GetDepth(String), // symbol
+    GetDepth(Market), // symbol
     GetBalance(GetBalancePayload)
 }
 

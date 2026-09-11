@@ -9,6 +9,10 @@ use crate::{ redis::redis_manager::RedisManager, routes::Asset, types::{ Deposit
 pub async fn onramp(user_id:web::ReqData<Uuid>, body: Json<OnrampSchema>, data: web::Data<RedisManager>) -> impl Responder{
     // get the userId from the middlware and send to redis
 
+    if body.amount == 0 {
+        return HttpResponse::BadRequest().json("please enter some real amount");
+    };
+
     let res =  data.send_and_await(MessageToEngine::Onramp(OnrampPayload { // no need to deref *
         // data since it does it automatically
         amount: body.amount,

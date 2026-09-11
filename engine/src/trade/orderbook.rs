@@ -1,4 +1,4 @@
-use std::{collections::{BTreeMap, HashMap, VecDeque}};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -7,6 +7,7 @@ use crate::{error::EngineError, trade::Asset, types::{OrderSide, OrderType}};
 
 pub type Price= u64;
 pub type CurrentPrice= u64;
+pub type UserId = Uuid;
 
 pub struct Fill{
     pub price: u64,
@@ -48,12 +49,22 @@ pub struct Orderbook{
     pub current_price: CurrentPrice,
     pub last_trade_id: u64, // ++ on each trade. (match)
     // Order ID  -> order location
-    pub order_index: HashMap<Uuid, OrderLocation> // to find and remove fast
+    pub order_index: HashMap<Uuid, OrderLocation>, // to find and remove fast
+    pub user_orders: HashMap<UserId, HashSet<Uuid>> // userId -> order Ids
 }
 
 pub struct OrderLocation{
     pub side: OrderSide,
     pub price: Price
+}
+pub struct DepthLevel {
+    pub price: String,
+    pub quantity: String 
+}
+
+pub struct DepthResponse {
+    pub bids : Vec<DepthLevel>,
+    pub asks : Vec<DepthLevel>
 }
 
 impl Orderbook{
@@ -64,7 +75,8 @@ impl Orderbook{
             asks: BTreeMap::new(),
             current_price: 0,
             last_trade_id: 0,
-            order_index: HashMap::new()
+            order_index: HashMap::new(),
+            user_orders: HashMap::new()
         }
    }
 
@@ -102,6 +114,8 @@ impl Orderbook{
                 a.push_back(order.clone()); // for same price the new order will be at last. and
                 // will we will pop from front
                 self.order_index.insert(order.order_id, OrderLocation { side: order.order_side, price: order.price });
+                // create the HashSet if doesnt exist and insert with order_id
+                self.user_orders.entry(order.user_id).or_default().insert(order.order_id);
                 if executed_qty > 0 {
                     order_status = OrderStatus::PartiallyFilled;
                 } 
@@ -118,6 +132,7 @@ impl Orderbook{
                     .or_insert_with(|| VecDeque::new());
                 a.push_back(order.clone()); 
                 self.order_index.insert(order.order_id, OrderLocation { side: order.order_side, price: order.price });
+                self.user_orders.entry(order.user_id).or_default().insert(order.order_id);
                 if executed_qty> 0 {
                     order_status = OrderStatus::PartiallyFilled;
                 } 
@@ -164,6 +179,10 @@ impl Orderbook{
                 if resting_ask.quantity == resting_ask.filled { // fully filled resting order.
                     // remove from order_index
                     self.order_index.remove(&resting_ask.order_id);
+                    // remove the order id from the HashSet
+                    if let Some(orders) = self.user_orders.get_mut(&resting_ask.user_id) {
+                        orders.remove(&resting_ask.order_id);
+                    };
                     // remove it
                     level.pop_front();
                 }
@@ -215,6 +234,9 @@ impl Orderbook{
                 if resting_bid.quantity == resting_bid.filled { // fully filled resting order.
                     // remove from order_index
                     self.order_index.remove(&resting_bid.order_id);
+                    if let Some(orders) = self.user_orders.get_mut(&resting_bid.user_id) {
+                        orders.remove(&resting_bid.order_id);
+                    };
                     // remove it
                     level.pop_front();
                 }
@@ -266,7 +288,51 @@ impl Orderbook{
 
         // also clean order_index entry
         self.order_index.remove(&order_id);
+        if let Some(orders) = self.user_orders.get_mut(&user_id) {
+                orders.remove(&cancelled_order.order_id);
+        };
 
         Ok(cancelled_order)
     }
+
+    pub fn get_depth(&self) -> DepthResponse {
+        let bids :Vec<DepthLevel>  = self.bids.iter().rev().map(|(price, orders)| { // for every diff price
+            // calculate total qty of orders
+            let total_qty: u64 = orders.iter().map(|o| o.quantity - o.filled).sum();
+            DepthLevel { // on each iter returns this 
+                price: price.to_string(),
+                quantity: total_qty.to_string()
+            }
+        }).collect(); 
+
+        let asks: Vec<DepthLevel> = self.asks.iter().map(|(price,orders)| {
+            let total_qty: u64 = orders.iter().map(|o| o.quantity - o.filled).sum();
+            DepthLevel {
+                price: price.to_string(),
+                quantity: total_qty.to_string()
+            }
+        }).collect();
+
+        DepthResponse {
+            bids,
+            asks
+        }
+    }
+
+    pub fn get_open_orders(&self, user_id: Uuid) -> Vec<&Order> {
+        let Some(order_ids) = self.user_orders.get(&user_id) else {
+            return vec![]; // if not entry for this userId means no orders return empty vec
+        };
+
+        order_ids.iter().filter_map(|id| {
+            let loc = self.order_index.get(id)?;
+            let side = match loc.side {
+                OrderSide::Buy => &self.bids,
+                OrderSide::Sell=> &self.asks,
+            };
+            // ? this returns an option
+            side.get(&loc.price)?.iter().find(|o|  o.user_id == user_id)
+        }).collect()
+    }
+
 }

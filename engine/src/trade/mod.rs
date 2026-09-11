@@ -7,7 +7,7 @@ pub use engine::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::types::{CancelOrderPayload, CreateOrderPayload, OrderSide};
+use crate::types::{CancelOrderPayload, CreateOrderPayload, GetBalancePayload, OpenOrderPayload, OrderSide};
 
 pub const SCALE_FACTOR: u64= 100_000_000;
 
@@ -42,7 +42,10 @@ pub enum Asset{
 pub enum BalanceActions {
     ValidateAndLockFunds(ValidateAndLockData),
     SettleFills(SettleFillsData),
-    CancelAndUpdateBalance(Order, Market, Sender<SettleResult>) // using same enum for now
+    CancelAndUpdateBalance(Order, Market, Sender<SettleResult>), // using same enum for now
+    Onramp(u64, Uuid), // amount, user_id
+    Deposit(Asset, u64, Uuid),// asset, qty, user_id
+    GetBalance(Asset, Uuid)
 }
 
 pub enum ValidateAndLockResponse{
@@ -79,5 +82,8 @@ pub struct ValidateAndLockData{
 
 pub enum OrderbookActions{
     CreateOrder(CreateOrderPayload),
-    CancelOrder(CancelOrderPayload)
+    CancelOrder(CancelOrderPayload),
+    GetOpenOrders(OpenOrderPayload), // ideally we should get open orders for users from in other in
+    // memory logs or database
+    GetDepth
 }

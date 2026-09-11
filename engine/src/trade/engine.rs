@@ -1,5 +1,6 @@
-use std::{collections::HashMap, num::TryFromIntError, thread};
+use std::{collections::HashMap, env, num::TryFromIntError, thread};
 use crossbeam_channel::{RecvError, Sender, bounded, unbounded};
+use redis::Commands;
 use rustc_hash::FxHashMap;
 use uuid::Uuid;
 use crate::{trade::{Asset, BalanceActions, MARKETS,
@@ -81,6 +82,43 @@ impl Engine {
                         // return order rejected. invalid market
                     }
                 }
+            },
+            MessageFromApi::Onramp(payload) => { // increase the usdc amount for this user
+                self.balance_sender.send(BalanceActions::Onramp(payload.amount, payload.user_id));
+            },
+            MessageFromApi::Deposit(payload) => { //
+                self.balance_sender.send(BalanceActions::Deposit(payload.asset, payload.quantity, payload.user_id));
+            },
+            MessageFromApi::GetOpenOrders(payload) => {
+                let orderbook = self.market_senders.get(&payload.symbol);
+
+                match orderbook {
+                    Some(sender) => {
+                        if let Err(e) = sender.send(OrderbookActions::GetOpenOrders(payload)) {
+                            eprintln!("market thread unreachable {}", e);
+                        }
+                    },
+                    None => {
+                        // return invalid market
+                    }
+
+                };
+            },
+            MessageFromApi::GetDepth(market) => {
+                let orderbook = self.market_senders.get(&market);
+
+                match orderbook {
+                    Some(sender) => {
+                        sender.send(OrderbookActions::GetDepth);
+                    },
+                    None => {
+                        // return invalid market
+                    }
+
+                };
+            },
+            MessageFromApi::GetBalance(payload) => {
+                self.balance_sender.send(BalanceActions::GetBalance(payload.asset, payload.user_id));
             }
         };
     }
@@ -228,7 +266,26 @@ fn spawn_balance_thread() -> Sender<BalanceActions> {
                         }
                     }
                 },
-            };
+                BalanceActions::Onramp(amount, user_id) => {
+                 balances.entry((user_id, Asset::USDC)).or_insert(Balance::default()).available += amount; 
+                 // send back to pub sub successfull
+                },
+                BalanceActions::Deposit(asset, qty, user_id) => {
+                 balances.entry((user_id, asset)).or_insert(Balance::default()).available += qty; 
+                 // send back to pub sub successfull
+                },
+                BalanceActions::GetBalance(asset, user_id) => {
+                    match balances.get(&(user_id,asset)){
+                        Some(bal) => {
+                            // send back to pub sub the balance
+                        }, 
+                        None => {
+                            // send back amount 0
+                        }
+                        
+                    }
+                }
+            }; 
         }
         });
     tx
@@ -241,6 +298,14 @@ fn spawn_market_thread(market:Market, balance_trasmitter: Sender<BalanceActions>
     // but worth considering using bounded(n) with some limit later for robustness 
 
     thread::spawn(move || {// spawn each orderbook/market
+        let redis_url = match env::var("REDIS_URL") {
+            Ok(url) => url,
+            Err(e) => panic!("redis url not found in environment: {}", e),
+        };
+        let redis_client = redis::Client::open(redis_url).expect("failed to get redis client");
+
+        let mut redis_conn = redis_client.get_connection().unwrap(); // sync connection
+
         let mut orderbook = Orderbook::new(market);
 
         while let Ok(val) = market_rx.recv() {
@@ -281,6 +346,7 @@ fn spawn_market_thread(market:Market, balance_trasmitter: Sender<BalanceActions>
                                 if val == SettleResult::Success {
                                     // return order success created with executed_qty and
                                     // order_status
+                                    // let _ = redis_conn.publish(channel, message)
                                 }
                             } else {
                                 println!("balance thread recv Error");
@@ -319,6 +385,17 @@ fn spawn_market_thread(market:Market, balance_trasmitter: Sender<BalanceActions>
 
                     };
                 },
+                OrderbookActions::GetDepth => { // ideally we should change the way to get depth 
+                    // on starting as every order comes the http gets subs to engine and engine
+                    // pubs every delta of order/cancel . http maintains local in memory depth
+                    let depth = orderbook.get_depth();
+                    // publish
+                },
+                OrderbookActions::GetOpenOrders(payload) => {
+                    let open_orders = orderbook.get_open_orders(payload.user_id);
+                    // publish
+                }
+                
             };
         }
     });

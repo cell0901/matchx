@@ -16,7 +16,7 @@ pub enum MessageFromApi{
     Onramp(OnrampPayload),
     Deposit(DepositPayload),
     GetOpenOrders(OpenOrderPayload),
-    GetDepth(String), // symbol
+    GetDepth(Market), // symbol
     GetBalance(GetBalancePayload)
 }
 
