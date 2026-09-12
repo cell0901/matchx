@@ -26,7 +26,7 @@ pub async fn handle_stream(client: Client, engine: Engine) -> Result<(), EngineE
                 match data {
                     Value::BulkString(val) => {
                         let message: EngineMessage= serde_json::from_slice(&val).unwrap();
-                        engine.process(message.data);
+                        engine.process(message.data, message.client_id);
                         // publish to pubsub the repsonse
                     },
                     _ => {
@@ -51,7 +51,7 @@ pub async fn handle_queue(client: Client, engine:Engine)-> Result<(), EngineErro
 
     if let Some((_, message)) =  res {
         let message: EngineMessage = serde_json::from_str(&message).unwrap();
-        engine.process(message.data);
+        engine.process(message.data, message.client_id);
     } else {
         println!("error while getting queue item");
     }

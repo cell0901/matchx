@@ -1,7 +1,9 @@
-use std::fmt::{Display};
+use std::fmt::{Display };
 use std::error::Error;
 
 use crossbeam_channel::RecvError;
+
+use crate::types::Code;
 
 
 
@@ -10,6 +12,10 @@ pub enum EngineError {
     Redis(String), // for any RedisError type
     Serde(String),
     StreamClosed,
+}
+
+#[derive(Debug, Clone)]
+pub enum OrderCancelError {
     OrderNotFound,
     Unauthorized
 }
@@ -40,7 +46,7 @@ impl Display for EngineError {
       match self {
         EngineError::Redis(val)  => write!(f, "Redis Error occurred {}",val ),
         EngineError::Serde(val)=> write!(f, "serialization error {}", val),
-        EngineError::StreamClosed => write!(f, "pubsub stream closed before receving a reply")
+        EngineError::StreamClosed => write!(f, "pubsub stream closed before receving a reply"),
       }  
     }
 }
@@ -54,6 +60,25 @@ impl Display for ValidateError {
         }    
     } 
 }
+impl Display for OrderCancelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OrderCancelError::OrderNotFound => write!(f, "order not found"),
+            OrderCancelError::Unauthorized=> write!(f, "user is Unauthorized"),
+        }
+    }
+}
+
+impl From<OrderCancelError> for Code {
+    fn from(value: OrderCancelError) -> Self {
+        match value {
+            OrderCancelError::OrderNotFound => Code::OrderNotFound,
+            OrderCancelError::Unauthorized=> Code::Unauthorized,
+        }
+    }
+
+}
 
 impl Error for EngineError {} 
 impl Error for ValidateError {} 
+impl Error for OrderCancelError {} 

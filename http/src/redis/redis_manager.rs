@@ -36,7 +36,7 @@ impl RedisManager {
 
     pub async fn send_and_await(&self, message:MessageToEngine) -> Result<MessageFromEngine, EngineError>{
         let mut connection = self.conn.clone();
-        let client_id = self.generate_client_id(); // generate the random id for this user request
+        let client_id = Uuid::now_v7().to_string(); // generate the random id for this user request
         let mut pubsub = self.client.get_async_pubsub().await?; 
         // ? returns RedisError so it looks for impl From<RedisError> for EngineError.
         // EngineError::from(val)
@@ -70,7 +70,7 @@ impl RedisManager {
         // duration is min 2 secs from engine response until i return error to user.
         let msg = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
             .await
-            .map_err(|_| EngineError::Timeout(client_id.clone()))?
+            .map_err(|_| EngineError::Timeout(client_id))?
             .ok_or(EngineError::StreamClosed)?; // stream close
              
 
@@ -80,8 +80,4 @@ impl RedisManager {
         Ok(from_engine)
     }
 
-    fn generate_client_id (&self) -> String{
-        let a = Uuid::now_v7();            
-        a.to_string()
-    }
 }

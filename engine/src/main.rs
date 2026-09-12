@@ -17,9 +17,11 @@ async fn main() -> RedisResult<()>{
         Err(e) => panic!("redis url not found in environment: {}", e),
     };
 
-    let engine = Engine::new();
-
     let client = redis::Client::open(redis_url)?;
+
+    let con = client.get_multiplexed_async_connection().await.expect("some error occured while getting connection"); 
+    let engine = Engine::new(con, client.clone());
+
     let queue_task = tokio::spawn(handle_queue(client.clone(), engine.clone())); // cloning engine
     // is fine , we only storing tx for balance and markets. which is fine and are safe to clone
     let stream_task = tokio::spawn(handle_stream(client.clone(), engine.clone()));

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{error::EngineError, trade::Asset, types::{OrderSide, OrderType}};
+use crate::{error::{EngineError, OrderCancelError}, trade::Asset, types::{OrderSide, OrderType}};
 
 pub type Price= u64;
 pub type CurrentPrice= u64;
@@ -22,7 +22,7 @@ pub struct Market {
     pub quote: Asset
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct Order{
     pub order_id: Uuid,
     pub price: Price,
@@ -35,6 +35,7 @@ pub struct Order{
 }
 
 
+#[derive(Serialize, Deserialize)]
 pub enum OrderStatus {
     New, // no match found sitting on orderbook
     Filled,
@@ -57,11 +58,13 @@ pub struct OrderLocation{
     pub side: OrderSide,
     pub price: Price
 }
+#[derive(Serialize)]
 pub struct DepthLevel {
     pub price: String,
     pub quantity: String 
 }
 
+#[derive(Serialize)]
 pub struct DepthResponse {
     pub bids : Vec<DepthLevel>,
     pub asks : Vec<DepthLevel>
@@ -80,7 +83,7 @@ impl Orderbook{
         }
    }
 
-    pub fn add_order(&mut self, order: Order) -> (u64, OrderStatus, Vec<Fill>) {
+    pub fn add_order(&mut self, order: Order) -> (u64, OrderStatus, Vec<Fill>, Uuid) {
        match order.order_type {
             OrderType::Limit => {
                 return self.fill_limit_order(order)
@@ -88,12 +91,12 @@ impl Orderbook{
             OrderType::Market => {
                 // IOC. if no order otherside then Cancelled. else partial and full fills.
                 println!("market order hit. implement function for this");
-                return  (4 as u64, OrderStatus::Cancelled, vec![])
+                return  (4 as u64, OrderStatus::Cancelled, vec![], Uuid::now_v7())
             }
        };
     }
 
-    fn fill_limit_order(&mut self, order: Order) -> (u64, OrderStatus, Vec<Fill>){
+    fn fill_limit_order(&mut self, order: Order) -> (u64, OrderStatus, Vec<Fill>, Uuid){
         match order.order_side {
             OrderSide::Buy => {
                 let mut order_status = OrderStatus::New;
@@ -104,7 +107,7 @@ impl Orderbook{
                 // do something with fills like balance changes etc
                 if executed_qty == order.quantity {
                     // return executed_quantity nd order status (Filled)
-                    return (executed_qty, OrderStatus::Filled, fills);
+                    return (executed_qty, OrderStatus::Filled, fills, order.order_id);
                 }
 
                 // if value for this key doesnt exist then insert with empty VecDeque. else return
@@ -119,14 +122,14 @@ impl Orderbook{
                 if executed_qty > 0 {
                     order_status = OrderStatus::PartiallyFilled;
                 } 
-                return (executed_qty , order_status, fills);
+                return (executed_qty , order_status, fills, order.order_id);
             },
             OrderSide::Sell => {
                 let mut order_status = OrderStatus::New;
 
                 let (executed_qty, fills) = self.match_ask(order.clone()); 
                 if executed_qty == order.quantity {
-                    return (executed_qty, OrderStatus::Filled, fills);
+                    return (executed_qty, OrderStatus::Filled, fills, order.order_id);
                 }
                 let a = self.bids.entry(order.price)
                     .or_insert_with(|| VecDeque::new());
@@ -136,7 +139,7 @@ impl Orderbook{
                 if executed_qty> 0 {
                     order_status = OrderStatus::PartiallyFilled;
                 } 
-                return (executed_qty, order_status, fills);
+                return (executed_qty, order_status, fills, order.order_id);
             }
         }
     }
@@ -249,9 +252,9 @@ impl Orderbook{
         (order.quantity - remaining_quantity, fills) // executed_quantity and fills
     }
 
-    pub fn cancel_order(&mut self, order_id: Uuid, user_id: Uuid ) -> Result<Order, EngineError> { // returnns
+    pub fn cancel_order(&mut self, order_id: Uuid, user_id: Uuid ) -> Result<Order, OrderCancelError> { // returnns
         // filled quantity
-        let location = self.order_index.get(&order_id).ok_or(EngineError::OrderNotFound)?.clone();
+        let location = self.order_index.get(&order_id).ok_or(OrderCancelError::OrderNotFound)?.clone();
 
         let cancelled_order;
         let side = match location.side {
@@ -260,7 +263,7 @@ impl Orderbook{
         };
 
 
-        let level = side.get_mut(&location.price).ok_or(EngineError::OrderNotFound)?; // this should
+        let level = side.get_mut(&location.price).ok_or(OrderCancelError::OrderNotFound)?; // this should
         // exist. because we already add a check before to check in order_index
 
         // in that level find the order_id index that matches
@@ -270,14 +273,14 @@ impl Orderbook{
             Some(index) => {
                 let order = &level[index];
                 if order.user_id != user_id {
-                    return  Err(EngineError::Unauthorized); // dont let other users cancel other's
+                    return  Err(OrderCancelError::Unauthorized); // dont let other users cancel other's
                     // orders
                 }
                 cancelled_order = order.clone();
                 level.remove(index); // remove from VecDeque
             },
             None =>  {
-                return  Err(EngineError::OrderNotFound); // dont let other users cancel other's
+                return  Err(OrderCancelError::OrderNotFound); // dont let other users cancel other's
             }
         }
 
@@ -319,7 +322,7 @@ impl Orderbook{
         }
     }
 
-    pub fn get_open_orders(&self, user_id: Uuid) -> Vec<&Order> {
+    pub fn get_open_orders(&self, user_id: Uuid) -> Vec<Order> {
         let Some(order_ids) = self.user_orders.get(&user_id) else {
             return vec![]; // if not entry for this userId means no orders return empty vec
         };
@@ -331,7 +334,7 @@ impl Orderbook{
                 OrderSide::Sell=> &self.asks,
             };
             // ? this returns an option
-            side.get(&loc.price)?.iter().find(|o|  o.user_id == user_id)
+            side.get(&loc.price)?.iter().find(|o|  o.user_id == user_id).cloned()
         }).collect()
     }
 

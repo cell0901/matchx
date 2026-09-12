@@ -4,10 +4,11 @@ pub mod engine;
 use crossbeam_channel::Sender;
 pub use orderbook::*;
 pub use engine::*;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::types::{CancelOrderPayload, CreateOrderPayload, GetBalancePayload, OpenOrderPayload, OrderSide};
+use crate::types::{CancelOrderPayload, CreateOrderPayload, OpenOrderPayload, OrderSide};
 
 pub const SCALE_FACTOR: u64= 100_000_000;
 
@@ -81,9 +82,9 @@ pub struct ValidateAndLockData{
 }
 
 pub enum OrderbookActions{
-    CreateOrder(CreateOrderPayload),
-    CancelOrder(CancelOrderPayload),
-    GetOpenOrders(OpenOrderPayload), // ideally we should get open orders for users from in other in
+    CreateOrder(CreateOrderPayload, String), // clientId
+    CancelOrder(CancelOrderPayload, String),
+    GetOpenOrders(OpenOrderPayload, String), // ideally we should get open orders for users from in other in
     // memory logs or database
-    GetDepth
+    GetDepth(String)
 }
