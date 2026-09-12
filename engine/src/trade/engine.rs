@@ -1,10 +1,13 @@
-use std::{collections::HashMap, env, num::TryFromIntError, thread};
+use std::{collections::HashMap, num::TryFromIntError, thread};
 use crossbeam_channel::{RecvError, Sender, bounded, unbounded};
-use redis::{AsyncCommands, Commands, aio::MultiplexedConnection};
+use redis::{AsyncCommands, Client, Commands, aio::MultiplexedConnection};
+use rust_decimal::{Decimal, prelude::FromPrimitive};
 use rustc_hash::FxHashMap;
+use serde::Serialize;
 use uuid::Uuid;
-use crate::{trade::{Asset, BalanceActions, MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse}, types::{Code::{self, InsufficientFunds, InvalidMarket, InvalidPriceOrQuantity, ServerError}, GetOpenOrderPayload, MessageFromApi, MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, RejectedPayload}};
+use crate::{trade::{Asset, BalanceActions, MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse}, types::{Code::{self, InsufficientFunds, InvalidMarket, InvalidPriceOrQuantity, ServerError}, GetBalance, GetOpenOrderPayload, MessageFromApi, MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, RejectedPayload, message_to_api::GetBalancePayload}};
 
+#[derive(Debug, Serialize)]
 pub struct Balance {
     pub available: u64,
     pub locked: u64
@@ -29,13 +32,13 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(redis_conn: MultiplexedConnection, redis_client: redis::Client) -> Engine{ 
-        let balance_sender = spawn_balance_thread();
+        let balance_sender = spawn_balance_thread(redis_client.clone());
         
         let mut market_senders = HashMap::new();   
         for market in MARKETS {
             let market_tx = spawn_market_thread(market, redis_client.clone(), balance_sender.clone());
             market_senders.insert(market, market_tx);
-        }
+        };
 
         Engine {
             market_senders,
@@ -45,11 +48,6 @@ impl Engine {
     }
 
     pub async fn process(&self, message: MessageFromApi, client_id: String) {
-        // createorder
-        // cancel order
-        //  onramp
-        //  deposit
-        // getopen orders
         match message {
             MessageFromApi::CreateOrder(payload) => {
                 let market = payload.symbol;
@@ -57,9 +55,10 @@ impl Engine {
 
                 match orderbook {
                     Some(sender)  => {
-                        if let Err(e) = sender.send(OrderbookActions::CreateOrder(payload, client_id)) {
+                        if let Err(e) = sender.send(OrderbookActions::CreateOrder(payload, client_id.clone())) {
                             println!("market thread unreachable {}", e);
                             // early return to api. order rejected, market unavailable
+                        self.publish_rejection(client_id, "market unavailable. please try later".to_string(), ServerError).await;
                         };
                     },
                     None => {
@@ -87,10 +86,10 @@ impl Engine {
                 }
             },
             MessageFromApi::Onramp(payload) => { // increase the usdc amount for this user
-                let _ = self.balance_sender.send(BalanceActions::Onramp(payload.amount, payload.user_id));
+                let _ = self.balance_sender.send(BalanceActions::Onramp(payload.amount, payload.user_id, client_id));
             },
             MessageFromApi::Deposit(payload) => { //
-                let _ = self.balance_sender.send(BalanceActions::Deposit(payload.asset, payload.quantity, payload.user_id));
+                let _ = self.balance_sender.send(BalanceActions::Deposit(payload.asset, payload.quantity, payload.user_id, client_id));
             },
             MessageFromApi::GetOpenOrders(payload) => {
                 let orderbook = self.market_senders.get(&payload.symbol);
@@ -124,7 +123,7 @@ impl Engine {
                 };
             },
             MessageFromApi::GetBalance(payload) => {
-                let _ = self.balance_sender.send(BalanceActions::GetBalance(payload.asset, payload.user_id));
+                let _ = self.balance_sender.send(BalanceActions::GetBalance(payload.asset, payload.user_id, client_id));
             }
         };
     }
@@ -141,14 +140,17 @@ impl Engine {
     }
 }
 
-fn spawn_balance_thread() -> Sender<BalanceActions> {
-        let (tx, rx) = unbounded::<BalanceActions>();
+fn spawn_balance_thread(client:Client) -> Sender<BalanceActions> {
+    let (tx, rx) = unbounded::<BalanceActions>();
 
-        // User id -> assets
+    // User id -> assets
+    // operations
+
+    // spawn the balance thread
+    thread::spawn(move|| {
         let mut balances: FxHashMap<(Uuid, Asset), Balance> = FxHashMap::default();
-
-        // spawn the balance thread
-        thread::spawn(move|| {
+         let mut redis_conn = client.get_connection().expect("failed to redis connection"); // sync
+        
            while let Ok(val) = rx.recv() {
             match val {
                 BalanceActions::ValidateAndLockFunds(data) => {
@@ -204,6 +206,7 @@ fn spawn_balance_thread() -> Sender<BalanceActions> {
                             }
                         };
                     }
+                    println!("balance after /create order {:?}", balances);
                 },
                 BalanceActions::SettleFills(data) => {
                     if data.side == OrderSide::Buy {
@@ -212,7 +215,7 @@ fn spawn_balance_thread() -> Sender<BalanceActions> {
                             let notional = calc_quote_amount(fill.price, fill.quantity);
                             if let Err(err) = notional {
                                     println!("overflow error {}", err);
-                                    data.resp.send(SettleResult::Overflow);
+                                    let _ = data.resp.send(SettleResult::Overflow);
                                     continue;
                             };
                             if let Some(bal) = balances.get_mut(&(fill.user_id, data.quote_asset)) {
@@ -235,7 +238,7 @@ fn spawn_balance_thread() -> Sender<BalanceActions> {
                             let notional = calc_quote_amount(fill.price, fill.quantity);
                             if let Err(err) = notional {
                                     println!("overflow error {}", err);
-                                    data.resp.send(SettleResult::Overflow);
+                                    let _ = data.resp.send(SettleResult::Overflow);
                                     continue;
                             };
                             // decrease seller locked base asset  (taker)
@@ -256,7 +259,7 @@ fn spawn_balance_thread() -> Sender<BalanceActions> {
                         }
                     }
                     // send Settle::Success
-                    data.resp.send(SettleResult::Success);
+                    let _ = data.resp.send(SettleResult::Success);
                 },
                 BalanceActions::CancelAndUpdateBalance(order, symbol, resp) => {
                     if order.order_side == OrderSide::Buy {
@@ -266,38 +269,63 @@ fn spawn_balance_thread() -> Sender<BalanceActions> {
                                 if let Some(bal) = balances.get_mut(&(order.user_id, symbol.quote)) {
                                     bal.available += left_qty_price;
                                     bal.locked -= left_qty_price;
-                                    resp.send(SettleResult::Success);
+                                    let _ = resp.send(SettleResult::Success);
                                 }
                             },
                             Err(e) => {
                                 eprintln!("overflow error {}", e);
-                                resp.send(SettleResult::Overflow);
+                                let _ = resp.send(SettleResult::Overflow);
                             }
                         };
-
                     } else { // if sell was cancelled increase base_asset avlbl amount
                         if let Some(bal) = balances.get_mut(&(order.user_id, symbol.base)) {
                             bal.available += order.quantity - order.filled;
                             bal.locked -= order.quantity - order.filled;
-                            resp.send(SettleResult::Success);
+                            let _ = resp.send(SettleResult::Success);
                         }
                     }
                 },
-                BalanceActions::Onramp(amount, user_id) => {
+                BalanceActions::Onramp(amount, user_id, client_id) => {
                  balances.entry((user_id, Asset::USDC)).or_insert(Balance::default()).available += amount; 
-                 // send back to pub sub successfull
+                    // send back to pub sub successfull
+                    let payload = serde_json::json!({"code": Code::OnrampSuccess, "message:": format!("onramp successfull amount {}", amount/SCALE_FACTOR)});
+                    let _: Result<(), _> = redis_conn.publish(client_id, payload.to_string());
                 },
-                BalanceActions::Deposit(asset, qty, user_id) => {
+                BalanceActions::Deposit(asset, qty, user_id, client_id) => {
                  balances.entry((user_id, asset)).or_insert(Balance::default()).available += qty; 
                  // send back to pub sub successfull
+                let payload = serde_json::json!({"code": Code::DepositSuccess, "message:": format!("deposit successfull amount {}", qty/SCALE_FACTOR)});
+                let _: Result<(), _> = redis_conn.publish(client_id, payload.to_string());
                 },
-                BalanceActions::GetBalance(asset, user_id) => {
+                BalanceActions::GetBalance(asset, user_id, client_id) => {
                     match balances.get(&(user_id,asset)){
                         Some(bal) => {
-                            // send back to pub sub the balance
+                            let parsed_avlbl = u64_to_string(bal.available);
+                            let parsed_locked = u64_to_string(bal.locked);
+
+                            if let (Ok(available), Ok(locked)) = (parsed_avlbl, parsed_locked) {
+                                let payload = serde_json::to_string(&MessageToApi::GetBalance(GetBalancePayload {
+                                    asset,
+                                    balance:GetBalance {
+                                        available,
+                                        locked
+                                    } 
+                                })).expect("serde error");
+                                let _: Result<(), _> = redis_conn.publish(client_id, payload.to_string());
+                            } else {
+                                eprintln!("failed to parse user balance");
+                            }
                         }, 
                         None => {
                             // send back amount 0
+                            let payload = serde_json::to_string(&MessageToApi::GetBalance(GetBalancePayload {
+                                asset,
+                                balance:GetBalance {
+                                    available: "0".to_string(),
+                                    locked: "0".to_string()
+                                } 
+                            })).expect("serde error");
+                            let _: Result<(), _> = redis_conn.publish(client_id, payload.to_string());
                         }
                     }
                 }
@@ -471,4 +499,15 @@ fn calc_quote_amount(price: u64, quantity: u64)-> Result<u64, TryFromIntError> {
     let product = ((price as u128) * (quantity as u128)) / SCALE_FACTOR as u128;
 
     u64::try_from(product).map_err(|e| e)
+}
+
+pub fn u64_to_string(value: u64) -> Result<String, &'static str> {
+    let scale_factor = Decimal::from_u64(SCALE_FACTOR)
+        .ok_or("Failed to convert scale_factor to decimal")?;
+
+    let dec = Decimal::from_u64(value)
+        .ok_or("Failed to convert value to decimal")?
+        / scale_factor;
+
+    Ok(dec.normalize().to_string())
 }

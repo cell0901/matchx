@@ -118,7 +118,7 @@ async fn get_orders (user_id:web::ReqData<Uuid> , body: Json<OpenOrderSchema>, d
 }
 
 
-fn string_to_64(val_str: &str ) -> Result<u64, &'static str>{
+pub fn string_to_64(val_str: &str ) -> Result<u64, &'static str>{
 
     // parse string to decimal
     let dec = Decimal::from_str(val_str).map_err(|_| "Invalid decimal string format")?;

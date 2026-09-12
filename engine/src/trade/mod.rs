@@ -31,7 +31,7 @@ pub const MARKETS: [Market; 4] = [
     },
 ];
 
-#[derive(Clone,Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[derive(Clone,Copy, PartialEq, Eq, Hash, Deserialize, Serialize, Debug)]
 pub enum Asset{
     SOL,
     BTC,
@@ -44,9 +44,9 @@ pub enum BalanceActions {
     ValidateAndLockFunds(ValidateAndLockData),
     SettleFills(SettleFillsData),
     CancelAndUpdateBalance(Order, Market, Sender<SettleResult>), // using same enum for now
-    Onramp(u64, Uuid), // amount, user_id
-    Deposit(Asset, u64, Uuid),// asset, qty, user_id
-    GetBalance(Asset, Uuid)
+    Onramp(u64, Uuid, String), // amount, user_id
+    Deposit(Asset, u64, Uuid, String),// asset, qty, user_id
+    GetBalance(Asset, Uuid, String)
 }
 
 pub enum ValidateAndLockResponse{

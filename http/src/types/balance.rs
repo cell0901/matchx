@@ -8,13 +8,13 @@ pub struct Balance {
 
 #[derive(Serialize,Deserialize)]
 pub struct OnrampSchema {
-    pub amount: u64
+    pub amount: String
 }
 
 #[derive(Serialize,Deserialize)]
 pub struct DepositSchema {
     pub asset: String,
-    pub quantity: u64,
+    pub quantity: String,
 }
 
 #[derive(Serialize,Deserialize)]

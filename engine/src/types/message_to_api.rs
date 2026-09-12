@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::trade::{DepthResponse, Order, OrderStatus};
+use crate::trade::{Asset, Balance, DepthResponse, Order, OrderStatus};
 
 #[derive(Serialize, Deserialize)]
 pub struct OrderCancelledPayload{
@@ -27,6 +27,19 @@ pub struct RejectedPayload {
 pub struct GetOpenOrderPayload {
     pub orders: Vec<Order>
 }
+
+#[derive(Serialize)]
+pub struct GetBalance {
+    pub available: String,
+    pub locked: String
+}
+
+#[derive(Serialize)]
+pub struct GetBalancePayload {
+    pub asset: Asset,
+    pub balance: GetBalance
+}
+
 #[derive(Serialize)]
 pub enum MessageToApi {
     OrderPlaced(OrderPlacedPayload),
@@ -34,8 +47,10 @@ pub enum MessageToApi {
     OrderCancelled(OrderCancelledPayload),
     CancelRejected(RejectedPayload),
     GetDepth(DepthResponse),
-    GetOpenOrders(GetOpenOrderPayload)
+    GetOpenOrders(GetOpenOrderPayload),
+    GetBalance(GetBalancePayload)
 }
+
 
 #[derive(serde::Serialize)]
 #[serde(rename = "UNDER_SCORE")]
@@ -45,5 +60,7 @@ pub enum Code {
     OrderNotFound,
     Unauthorized,
     InvalidMarket,
-    ServerError
+    ServerError,
+    OnrampSuccess,
+    DepositSuccess
 }
