@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{error::{EngineError, OrderCancelError}, trade::Asset, types::{OrderSide, OrderType}};
+use crate::{error::{OrderCancelError}, trade::Asset, types::{OrderSide, OrderType}};
 
 pub type Price= u64;
 pub type CurrentPrice= u64;
@@ -22,7 +22,7 @@ pub struct Market {
     pub quote: Asset
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Debug)]
 pub struct Order{
     pub order_id: Uuid,
     pub price: Price,
@@ -100,11 +100,8 @@ impl Orderbook{
         match order.order_side {
             OrderSide::Buy => {
                 let mut order_status = OrderStatus::New;
-                let (executed_qty, fills) = self.match_bid(order.clone());  // from all those
+                let (executed_qty, fills) = self.match_bid(order.clone());
                 
-                // TODO ADD balance changes 
-                
-                // do something with fills like balance changes etc
                 if executed_qty == order.quantity {
                     // return executed_quantity nd order status (Filled)
                     return (executed_qty, OrderStatus::Filled, fills, order.order_id);
@@ -122,6 +119,8 @@ impl Orderbook{
                 if executed_qty > 0 {
                     order_status = OrderStatus::PartiallyFilled;
                 } 
+                println!("orderbook after /order bids: {:?}", &self.bids);
+                println!("orderbook after /order asks: {:?}", &self.asks);
                 return (executed_qty , order_status, fills, order.order_id);
             },
             OrderSide::Sell => {
@@ -240,7 +239,6 @@ impl Orderbook{
                     if let Some(orders) = self.user_orders.get_mut(&resting_bid.user_id) {
                         orders.remove(&resting_bid.order_id);
                     };
-                    // remove it
                     level.pop_front();
                 }
             }
@@ -254,7 +252,8 @@ impl Orderbook{
 
     pub fn cancel_order(&mut self, order_id: Uuid, user_id: Uuid ) -> Result<Order, OrderCancelError> { // returnns
         // filled quantity
-        let location = self.order_index.get(&order_id).ok_or(OrderCancelError::OrderNotFound)?.clone();
+        println!("cancel_order engine hit");
+        let location = self.order_index.get(&order_id).ok_or(OrderCancelError::OrderNotFound)?;
 
         let cancelled_order;
         let side = match location.side {
@@ -262,10 +261,12 @@ impl Orderbook{
             OrderSide::Sell=> &mut self.asks,
         };
 
+        println!("after finding side");
 
         let level = side.get_mut(&location.price).ok_or(OrderCancelError::OrderNotFound)?; // this should
         // exist. because we already add a check before to check in order_index
 
+        println!("after finding level");
         // in that level find the order_id index that matches
         let pos = level.iter().position(|o| o.order_id == order_id);
 
@@ -280,7 +281,8 @@ impl Orderbook{
                 level.remove(index); // remove from VecDeque
             },
             None =>  {
-                return  Err(OrderCancelError::OrderNotFound); // dont let other users cancel other's
+                println!("inside none case");
+                return  Err(OrderCancelError::OrderNotFound);
             }
         }
 
@@ -333,7 +335,9 @@ impl Orderbook{
                 OrderSide::Buy => &self.bids,
                 OrderSide::Sell=> &self.asks,
             };
+
             // ? this returns an option
+            // fix this only returns one side orders 
             side.get(&loc.price)?.iter().find(|o|  o.user_id == user_id).cloned()
         }).collect()
     }

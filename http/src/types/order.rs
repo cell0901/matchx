@@ -10,7 +10,6 @@ pub struct OrderSchema { // from client
     pub price: String, // it should be an option if the order type is market. but currenly we will
     // default
     pub quantity: String,
-    pub order_id: String 
 }
 
 #[derive(Deserialize)]

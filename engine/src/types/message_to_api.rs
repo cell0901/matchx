@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::trade::{Asset, Balance, DepthResponse, Order, OrderStatus};
+use crate::trade::{Asset,DepthResponse, Order, OrderStatus};
 
 #[derive(Serialize, Deserialize)]
 pub struct OrderCancelledPayload{
@@ -19,7 +19,7 @@ pub struct OrderPlacedPayload {
 }
 
 #[derive(Serialize)]
-pub struct RejectedPayload {
+pub struct ResponsePayload {
     pub code: Code,
     pub message: String
 }
@@ -35,25 +35,28 @@ pub struct GetBalance {
 }
 
 #[derive(Serialize)]
-pub struct GetBalancePayload {
+pub struct GetBalanceResponse {
     pub asset: Asset,
     pub balance: GetBalance
 }
 
+
 #[derive(Serialize)]
 pub enum MessageToApi {
     OrderPlaced(OrderPlacedPayload),
-    OrderRejected(RejectedPayload),
+    OrderRejected(ResponsePayload),
     OrderCancelled(OrderCancelledPayload),
-    CancelRejected(RejectedPayload),
+    CancelRejected(ResponsePayload),
     GetDepth(DepthResponse),
     GetOpenOrders(GetOpenOrderPayload),
-    GetBalance(GetBalancePayload)
+    GetBalance(GetBalanceResponse),
+    OnrampResponse(ResponsePayload),
+    DepositResponse(ResponsePayload)
 }
 
 
 #[derive(serde::Serialize)]
-#[serde(rename = "UNDER_SCORE")]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")] // rename all to rename enum's type 
 pub enum Code {
     InsufficientFunds,
     InvalidPriceOrQuantity,

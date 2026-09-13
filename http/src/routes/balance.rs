@@ -33,7 +33,7 @@ pub async fn onramp(user_id:web::ReqData<Uuid>, body: Json<OnrampSchema>, data: 
         Ok(val) => HttpResponse::Ok().json(val),
         Err(err) => {
             println!("error occurrred {}", err);
-            HttpResponse::BadRequest().body("internal server error")
+            HttpResponse::BadRequest().body("internal server error /onramp route")
         }
     }
 }
@@ -92,7 +92,7 @@ pub async fn get_balance(user_id:web::ReqData<Uuid>, param: web::Query<GetBalanc
     match res {
         Ok(val) => HttpResponse::Ok().json(val),
         Err(err) => {
-            println!("error occurrred get balance{}", err);
+            println!("error occurrred /get balance {}", err);
             HttpResponse::BadRequest().body("unable to get balance")
         }
     }

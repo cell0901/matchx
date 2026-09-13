@@ -1,4 +1,4 @@
-use redis::{AsyncCommands, Client, Value, streams::{StreamReadOptions, StreamReadReply}};
+use redis::{AsyncCommands, AsyncConnectionConfig, Client, Value, streams::{StreamReadOptions, StreamReadReply}};
 
 use crate::{error::EngineError, trade::Engine, types::EngineMessage};
 
@@ -26,7 +26,8 @@ pub async fn handle_stream(client: Client, engine: Engine) -> Result<(), EngineE
                 match data {
                     Value::BulkString(val) => {
                         let message: EngineMessage= serde_json::from_slice(&val).unwrap();
-                        engine.process(message.data, message.client_id);
+                        println!("message came inside handle_stream");
+                        engine.process(message.data, message.client_id).await;
                         // publish to pubsub the repsonse
                     },
                     _ => {
@@ -45,15 +46,30 @@ pub async fn handle_stream(client: Client, engine: Engine) -> Result<(), EngineE
 }
 
 pub async fn handle_queue(client: Client, engine:Engine)-> Result<(), EngineError> {
-    let mut con = client.get_multiplexed_async_connection().await?; // using async connection to
+    // BRPOP with a timeout of 0 blocks indefinitely. redis-rs 1.x gives async
+    // connections a 500 ms response timeout by default, so disable that timeout
+    // only for this dedicated blocking-consumer connection.
+    let config = AsyncConnectionConfig::new().set_response_timeout(None);
+    let mut con = client
+        .get_multiplexed_async_connection_with_config(&config)
+        .await?;
+    
+    println!("handle_queue spawned");
 
-    let res: Option<(String,String)> = con.brpop("engine:queue", 0.0).await?;
+    loop {
+        let res: Option<(String, String)> =
+            con.brpop("engine:queue", 0.0).await?;
 
-    if let Some((_, message)) =  res {
-        let message: EngineMessage = serde_json::from_str(&message).unwrap();
-        engine.process(message.data, message.client_id);
-    } else {
-        println!("error while getting queue item");
+        if let Some((_, message)) = res {
+            let message: EngineMessage = serde_json::from_str(&message)?;
+
+            println!("message came inside queue");
+
+            engine
+                .process(message.data, message.client_id)
+                .await;
+        } else {
+            println!("error while getting queue item");
+        }
     }
-    Ok(())
 }

@@ -1,6 +1,8 @@
 pub mod orderbook;
 pub mod engine;
 
+use std::time::Instant;
+
 use crossbeam_channel::Sender;
 pub use orderbook::*;
 pub use engine::*;

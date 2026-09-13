@@ -22,10 +22,21 @@ async fn main() -> RedisResult<()>{
     let con = client.get_multiplexed_async_connection().await.expect("some error occured while getting connection"); 
     let engine = Engine::new(con, client.clone());
 
-    let queue_task = tokio::spawn(handle_queue(client.clone(), engine.clone())); // cloning engine
-    // is fine , we only storing tx for balance and markets. which is fine and are safe to clone
-    let stream_task = tokio::spawn(handle_stream(client.clone(), engine.clone()));
+    let stream_client = client.clone();
+    let stream_engine = engine.clone();
 
-    let _ =tokio::join!(queue_task, stream_task); // waits for both the spawned tasks to be completed
+    let stream_task = tokio::spawn(async move {
+        if let Err(err) = handle_stream(stream_client, stream_engine).await {
+            eprintln!("stream worker stopped: {err}");
+        }
+    });
+    let queue_task = tokio::spawn(async move {
+        if let Err(err) = handle_queue(client, engine).await {
+            eprintln!("queue worker stopped: {err}");
+        }
+    });
+    // is fine , we only storing tx for balance and markets. which is fine and are safe to clone
+
+    let _ = tokio::join!(queue_task, stream_task); // waits for both workers to be completed
     Ok(())
 }

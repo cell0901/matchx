@@ -1,7 +1,6 @@
 pub mod types;
 pub mod routes;
 pub mod redis;
-pub mod db;
 pub mod error;
 pub mod entities;
 
@@ -12,17 +11,9 @@ use actix_web::middleware::{ from_fn};
 use actix_web::{App,  HttpServer,  web::{ self}};
 
 use crate::redis::redis_manager::RedisManager;
-use crate::routes::{auth_middleware, deposit, get_balance, onramp};
+use crate::routes::order::order;
+use crate::routes::{auth_middleware, cancel_order, deposit, get_balance, get_orders, onramp};
 use crate::routes::auth::{signin, signup};
-
-// #[derive(Debug)]
-// struct UserBalances{
-//     // (username, Asset), balances
-//     user_balances: Mutex<HashMap<(String,String), Balance>>// we should use u32,u32 for user name and
-//     // asset since hashing them is fast and reduces heap allocation unlike inthis case
-//     // for faster and reduce latency we can use Dashmap(it doesnt locks the whole haspmap)
-// }
-
 
 pub const SCALE_FACTOR: u64= 100_000_000;
 
@@ -59,6 +50,9 @@ async fn main() -> std::io::Result<()> {
             .service(onramp)
             .service(deposit)
             .service(get_balance)
+            .service(order)
+            .service(cancel_order)
+            .service(get_orders)
         )
     })
     .bind(("127.0.0.1", 8080))?

@@ -20,13 +20,13 @@ pub enum MessageFromApi{
     GetBalance(GetBalancePayload)
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub enum OrderSide {
     Buy,
     Sell
 }
 
-#[derive(Serialize, Deserialize , Clone)]
+#[derive(Serialize, Deserialize , Clone, Debug)]
 pub enum OrderType {
     Limit,
     Market

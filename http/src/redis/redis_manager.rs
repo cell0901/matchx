@@ -57,6 +57,7 @@ impl RedisManager {
 
         if is_query { 
             // if the request is getorders or depth then just send to normal queue
+            println!("ithis is queue");
             let _: () = connection.lpush("engine:queue", payload).await?;  // returns length of new list
             // lpush returns ()
             // something which type needs to known even if u dont need. so we just coerce it into

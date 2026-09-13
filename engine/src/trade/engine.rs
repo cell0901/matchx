@@ -5,7 +5,9 @@ use rust_decimal::{Decimal, prelude::FromPrimitive};
 use rustc_hash::FxHashMap;
 use serde::Serialize;
 use uuid::Uuid;
-use crate::{trade::{Asset, BalanceActions, MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse}, types::{Code::{self, InsufficientFunds, InvalidMarket, InvalidPriceOrQuantity, ServerError}, GetBalance, GetOpenOrderPayload, MessageFromApi, MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, RejectedPayload, message_to_api::GetBalancePayload}};
+use crate::{trade::{Asset, BalanceActions, MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, 
+    SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse}, types::{Code::{self, InsufficientFunds, InvalidMarket, InvalidPriceOrQuantity, ServerError}, GetBalance, GetBalanceResponse, GetOpenOrderPayload, MessageFromApi, 
+        MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, ResponsePayload }};
 
 #[derive(Debug, Serialize)]
 pub struct Balance {
@@ -48,6 +50,7 @@ impl Engine {
     }
 
     pub async fn process(&self, message: MessageFromApi, client_id: String) {
+        println!("process(), ran");
         match message {
             MessageFromApi::CreateOrder(payload) => {
                 let market = payload.symbol;
@@ -123,6 +126,7 @@ impl Engine {
                 };
             },
             MessageFromApi::GetBalance(payload) => {
+                println!("get balance MessageFromApi arm ");
                 let _ = self.balance_sender.send(BalanceActions::GetBalance(payload.asset, payload.user_id, client_id));
             }
         };
@@ -131,7 +135,7 @@ impl Engine {
     async fn publish_rejection(&self, client_id: String, message: String, code: Code) {
         let mut conn = self.redis_conn.clone(); // multiplex clone is cheap
         
-        let payload = serde_json::to_string(&MessageToApi::OrderRejected(RejectedPayload {
+        let payload = serde_json::to_string(&MessageToApi::OrderRejected(ResponsePayload {
             code: code,
             message
         })).expect("serde error");
@@ -287,14 +291,23 @@ fn spawn_balance_thread(client:Client) -> Sender<BalanceActions> {
                 },
                 BalanceActions::Onramp(amount, user_id, client_id) => {
                  balances.entry((user_id, Asset::USDC)).or_insert(Balance::default()).available += amount; 
+                    println!("balance after /onramp order {:?}", balances);
                     // send back to pub sub successfull
-                    let payload = serde_json::json!({"code": Code::OnrampSuccess, "message:": format!("onramp successfull amount {}", amount/SCALE_FACTOR)});
+                    let payload = serde_json::to_string(&MessageToApi::OnrampResponse(ResponsePayload{
+                        code: Code::OnrampSuccess,
+                        message: format!("onramp successfull amount {}", amount)
+                    })).expect("serde error");
+
                     let _: Result<(), _> = redis_conn.publish(client_id, payload.to_string());
                 },
                 BalanceActions::Deposit(asset, qty, user_id, client_id) => {
                  balances.entry((user_id, asset)).or_insert(Balance::default()).available += qty; 
                  // send back to pub sub successfull
-                let payload = serde_json::json!({"code": Code::DepositSuccess, "message:": format!("deposit successfull amount {}", qty/SCALE_FACTOR)});
+                    println!("balance after /deposit order {:?}", balances);
+                let payload = serde_json::to_string(&MessageToApi::DepositResponse(ResponsePayload{
+                        code: Code::DepositSuccess,
+                        message: format!("Deposit successfull amount {}", qty)
+                    })).expect("serde error");
                 let _: Result<(), _> = redis_conn.publish(client_id, payload.to_string());
                 },
                 BalanceActions::GetBalance(asset, user_id, client_id) => {
@@ -303,8 +316,9 @@ fn spawn_balance_thread(client:Client) -> Sender<BalanceActions> {
                             let parsed_avlbl = u64_to_string(bal.available);
                             let parsed_locked = u64_to_string(bal.locked);
 
+
                             if let (Ok(available), Ok(locked)) = (parsed_avlbl, parsed_locked) {
-                                let payload = serde_json::to_string(&MessageToApi::GetBalance(GetBalancePayload {
+                                let payload = serde_json::to_string(&MessageToApi::GetBalance(GetBalanceResponse {
                                     asset,
                                     balance:GetBalance {
                                         available,
@@ -318,7 +332,8 @@ fn spawn_balance_thread(client:Client) -> Sender<BalanceActions> {
                         }, 
                         None => {
                             // send back amount 0
-                            let payload = serde_json::to_string(&MessageToApi::GetBalance(GetBalancePayload {
+                            println!("None arm ran");
+                            let payload = serde_json::to_string(&MessageToApi::GetBalance(GetBalanceResponse{
                                 asset,
                                 balance:GetBalance {
                                     available: "0".to_string(),
@@ -399,7 +414,7 @@ fn spawn_market_thread(market:Market, redis_client:redis::Client,  balance_trasm
                         },
                         Ok(ValidateAndLockResponse::InsufficientFunds) => {
                             // reject order 
-                            let payload = serde_json::to_string(&MessageToApi::OrderRejected(RejectedPayload {
+                            let payload = serde_json::to_string(&MessageToApi::OrderRejected(ResponsePayload {
                                 code: InsufficientFunds,
                                 message: "Please deposit some asset to trade".to_string()
                             })).expect("serde error");
@@ -407,7 +422,7 @@ fn spawn_market_thread(market:Market, redis_client:redis::Client,  balance_trasm
                             let _: Result<(), _> = redis_conn.publish(client_id, payload);
                         },
                         Ok(ValidateAndLockResponse::Overflow) => {
-                        let payload = serde_json::to_string(&MessageToApi::OrderRejected(RejectedPayload {
+                        let payload = serde_json::to_string(&MessageToApi::OrderRejected(ResponsePayload {
                                 code: InvalidPriceOrQuantity,
                                 message: "Please enter valid price or quantity".to_string()
                             })).expect("serde error");
@@ -442,7 +457,7 @@ fn spawn_market_thread(market:Market, redis_client:redis::Client,  balance_trasm
                         },
                         Err(e) => { 
                             // send response back with acutual erro message
-                            let payload = serde_json::to_string(&MessageToApi::CancelRejected(RejectedPayload {
+                            let payload = serde_json::to_string(&MessageToApi::CancelRejected(ResponsePayload{
                                 code: e.clone().into(), // implemented From Error for Code
                                 message: format!("{}",e)
                             })).expect("serde error");
