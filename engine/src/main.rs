@@ -1,13 +1,15 @@
 use std::env;
 
+pub mod error;
+pub mod handle_incoming;
+pub mod types;
+pub mod trade;
+
 use redis::RedisResult;
 
 use crate::{handle_incoming::{handle_queue, handle_stream}, trade::Engine};
 
-pub mod handle_incoming;
-pub mod trade;
-pub mod error;
-pub mod types;
+
 
 #[tokio::main]
 async fn main() -> RedisResult<()>{
@@ -20,7 +22,7 @@ async fn main() -> RedisResult<()>{
     let client = redis::Client::open(redis_url)?;
 
     let con = client.get_multiplexed_async_connection().await.expect("some error occured while getting connection"); 
-    let engine = Engine::new(con, client.clone());
+    let engine = Engine::new(con, client.clone(), false);
 
     let stream_client = client.clone();
     let stream_engine = engine.clone();

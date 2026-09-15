@@ -107,11 +107,21 @@ impl Orderbook{
                     return (executed_qty, OrderStatus::Filled, fills, order.order_id);
                 }
 
+                let final_order = Order {
+                    order_id: order.order_id,
+                    price: order.price,
+                    user_id: order.user_id,
+                    quantity: order.quantity,
+                    order_side: order.order_side.clone(),
+                    order_type: order.order_type,
+                    filled: executed_qty
+                };
+
                 // if value for this key doesnt exist then insert with empty VecDeque. else return
                 // with mutable ref to the value
                 let a = self.bids.entry(order.price)
                     .or_insert_with(|| VecDeque::new());
-                a.push_back(order.clone()); // for same price the new order will be at last. and
+                a.push_back(final_order); // for same price the new order will be at last. and
                 // will we will pop from front
                 self.order_index.insert(order.order_id, OrderLocation { side: order.order_side, price: order.price });
                 // create the HashSet if doesnt exist and insert with order_id
@@ -119,25 +129,42 @@ impl Orderbook{
                 if executed_qty > 0 {
                     order_status = OrderStatus::PartiallyFilled;
                 } 
-                println!("orderbook after /order bids: {:?}", &self.bids);
-                println!("orderbook after /order asks: {:?}", &self.asks);
+                let json= serde_json::to_string_pretty(&self.bids);
+                let json2=  serde_json::to_string_pretty(&self.asks);
+                println!("orderbook after buy /order bids: {}", json.unwrap());
+                println!("orderbook after buy /order asks: {}", json2.unwrap());
                 return (executed_qty , order_status, fills, order.order_id);
             },
             OrderSide::Sell => {
                 let mut order_status = OrderStatus::New;
 
+                println!("sell order came {}", order.quantity);
                 let (executed_qty, fills) = self.match_ask(order.clone()); 
+                println!("sell order after match ask{}", order.quantity);
                 if executed_qty == order.quantity {
                     return (executed_qty, OrderStatus::Filled, fills, order.order_id);
                 }
-                let a = self.bids.entry(order.price)
+                let final_order = Order {
+                    order_id: order.order_id,
+                    price: order.price,
+                    user_id: order.user_id,
+                    quantity: order.quantity,
+                    order_side: order.order_side.clone(),
+                    order_type: order.order_type,
+                    filled: executed_qty
+                };
+                let a = self.asks.entry(order.price)
                     .or_insert_with(|| VecDeque::new());
-                a.push_back(order.clone()); 
+                a.push_back(final_order); 
                 self.order_index.insert(order.order_id, OrderLocation { side: order.order_side, price: order.price });
                 self.user_orders.entry(order.user_id).or_default().insert(order.order_id);
-                if executed_qty> 0 {
+                if executed_qty > 0 {
                     order_status = OrderStatus::PartiallyFilled;
                 } 
+                let json= serde_json::to_string_pretty(&self.bids);
+                let json2=  serde_json::to_string_pretty(&self.asks);
+                println!("orderbook after sell /order bids: {}", json.unwrap());
+                println!("orderbook after sell /order asks: {}", json2.unwrap());
                 return (executed_qty, order_status, fills, order.order_id);
             }
         }
@@ -231,6 +258,7 @@ impl Orderbook{
                 self.last_trade_id += 1; // on each fill
                 
                 remaining_quantity -= trade_qty;
+                println!("sell order resting_bid: {:?} and trade_qty {:?}", resting_bid, trade_qty);
                 resting_bid.filled += trade_qty;
 
                 if resting_bid.quantity == resting_bid.filled { // fully filled resting order.
@@ -244,7 +272,7 @@ impl Orderbook{
             }
 
             if level.is_empty() { 
-                self.asks.remove(&best_bid_price);
+                self.bids.remove(&best_bid_price); // remove the bid
             }
         }
         (order.quantity - remaining_quantity, fills) // executed_quantity and fills
@@ -273,6 +301,7 @@ impl Orderbook{
         match pos {
             Some(index) => {
                 let order = &level[index];
+                println!("the cancel_order order {:?}", order);
                 if order.user_id != user_id {
                     return  Err(OrderCancelError::Unauthorized); // dont let other users cancel other's
                     // orders

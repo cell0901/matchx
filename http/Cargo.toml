@@ -18,3 +18,6 @@ futures-util = "0.3.34"
 # strgin to u64 parsing
 rust_decimal = "1.34" # or current version
 strum = {version = "0.28.0",features = ["derive"]}
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }

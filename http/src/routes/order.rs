@@ -6,7 +6,7 @@ use crate::{SCALE_FACTOR, redis::redis_manager::RedisManager, routes::Market, ty
 
 #[post("/order")]
 async fn order(user_id: web::ReqData<Uuid>, body:Json<OrderSchema>, data:web::Data<RedisManager> ) -> impl Responder{
-    let order_id = Uuid::now_v7();    
+    let order_id = Uuid::now_v7(); 
 
     let parsed_price = match string_to_64(body.price.as_str()) {
         Ok(price) => {

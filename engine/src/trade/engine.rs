@@ -1,12 +1,11 @@
 use std::{collections::HashMap, num::TryFromIntError, thread};
 use crossbeam_channel::{RecvError, Sender, bounded, unbounded};
-use redis::{AsyncCommands, Client, Commands, aio::MultiplexedConnection};
+use redis::{AsyncCommands, Commands, aio::MultiplexedConnection};
 use rust_decimal::{Decimal, prelude::FromPrimitive};
 use rustc_hash::FxHashMap;
 use serde::Serialize;
 use uuid::Uuid;
-use crate::{trade::{Asset, BalanceActions, MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, 
-    SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse}, types::{Code::{self, InsufficientFunds, InvalidMarket, InvalidPriceOrQuantity, ServerError}, GetBalance, GetBalanceResponse, GetOpenOrderPayload, MessageFromApi, 
+use crate::{trade::{Asset, BalanceActions, MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse, publisher::{NullPublisher, RedisPublisher, ResultPublisher}}, types::{Code::{self, InsufficientFunds, InvalidMarket, InvalidPriceOrQuantity, ServerError}, GetBalance, GetBalanceResponse, GetOpenOrderPayload, MessageFromApi, 
         MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, ResponsePayload }};
 
 #[derive(Debug, Serialize)]
@@ -33,19 +32,32 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new(redis_conn: MultiplexedConnection, redis_client: redis::Client) -> Engine{ 
-        let balance_sender = spawn_balance_thread(redis_client.clone());
-        
-        let mut market_senders = HashMap::new();   
+    pub fn new(redis_conn: MultiplexedConnection, redis_client: redis::Client, is_benchmark: bool) -> Engine{ 
+        let balance_publisher : Box<dyn ResultPublisher> = if is_benchmark { // if benchmark test
+            // set NullPublisher
+            Box::new(NullPublisher)
+        } else {
+            // set PublishToRedis
+            Box::new(RedisPublisher::new(redis_client.clone()))
+        };
+
+        let balance_sender = spawn_balance_thread(balance_publisher);
+        let mut market_senders = HashMap::new();
         for market in MARKETS {
-            let market_tx = spawn_market_thread(market, redis_client.clone(), balance_sender.clone());
+            let market_publisher: Box<dyn ResultPublisher> = if is_benchmark {
+                Box::new(NullPublisher)
+            } else {
+                Box::new(RedisPublisher::new(redis_client.clone()))
+            };
+            let market_tx = spawn_market_thread(market, market_publisher, balance_sender.clone());
             market_senders.insert(market, market_tx);
         };
 
         Engine {
             market_senders,
             balance_sender,
-            redis_conn: redis_conn
+            redis_conn: redis_conn // this redis conn is only for engine to do redis connection in
+            // async
         }
     }
 
@@ -144,7 +156,7 @@ impl Engine {
     }
 }
 
-fn spawn_balance_thread(client:Client) -> Sender<BalanceActions> {
+fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Sender<BalanceActions> {
     let (tx, rx) = unbounded::<BalanceActions>();
 
     // User id -> assets
@@ -153,7 +165,6 @@ fn spawn_balance_thread(client:Client) -> Sender<BalanceActions> {
     // spawn the balance thread
     thread::spawn(move|| {
         let mut balances: FxHashMap<(Uuid, Asset), Balance> = FxHashMap::default();
-         let mut redis_conn = client.get_connection().expect("failed to redis connection"); // sync
         
            while let Ok(val) = rx.recv() {
             match val {
@@ -193,7 +204,7 @@ fn spawn_balance_thread(client:Client) -> Sender<BalanceActions> {
                         let avl_balance = balances.get_mut(&(data.user_id, data.asset)); 
                         match avl_balance {
                             Some(val) => {
-                                if val.available < data.quantity { // since this is ask. just
+                                if val.available < data.quantity { // this is ask. just
                                     // compare qty
                                     // send insufficient funds
                                     let _ = data.resp.send(ValidateAndLockResponse::InsufficientFunds);
@@ -247,18 +258,22 @@ fn spawn_balance_thread(client:Client) -> Sender<BalanceActions> {
                             };
                             // decrease seller locked base asset  (taker)
                             if let Some(bal) = balances.get_mut(&(fill.user_id, data.base_asset)) {
+                                println!("decreseing seller locked base asset by {}", fill.quantity);
                                 bal.locked -= fill.quantity;
                             }
 
                             // increase seller quote asset avlbl amount
+                            println!("sell /order increasing seller quote amount {}", notional.unwrap());
                             balances.entry((fill.user_id, data.quote_asset)).or_insert(Balance::default()).available += notional.unwrap();
 
                             // decrease maker locked quote asset amount
                             if let Some(bal) = balances.get_mut(&(fill.other_user_id, data.quote_asset)) {
+                                println!("decreasing maker (bid) locked quote asset {}", notional.unwrap());
                                 bal.locked -= notional.unwrap();
                             }
 
                             // increase maker base asset avlbl amount
+                            println!("increaesing maker base asset avlbl {}", fill.quantity);
                             balances.entry((fill.other_user_id, data.base_asset)).or_insert(Balance::default()).available += fill.quantity;
                         }
                     }
@@ -283,7 +298,11 @@ fn spawn_balance_thread(client:Client) -> Sender<BalanceActions> {
                         };
                     } else { // if sell was cancelled increase base_asset avlbl amount
                         if let Some(bal) = balances.get_mut(&(order.user_id, symbol.base)) {
+                            println!("bal in just starting {:?}", bal );
+                            println!("order quantity: {} and orer filled quantity: {}", order.quantity, order.filled);
                             bal.available += order.quantity - order.filled;
+                            println!("bal before changing locked{:?}", bal);
+                            println!("quantity to be removed{:?}", order.quantity - order.filled);
                             bal.locked -= order.quantity - order.filled;
                             let _ = resp.send(SettleResult::Success);
                         }
@@ -298,7 +317,7 @@ fn spawn_balance_thread(client:Client) -> Sender<BalanceActions> {
                         message: format!("onramp successfull amount {}", amount)
                     })).expect("serde error");
 
-                    let _: Result<(), _> = redis_conn.publish(client_id, payload.to_string());
+                    balance_publisher.publish(client_id, payload);
                 },
                 BalanceActions::Deposit(asset, qty, user_id, client_id) => {
                  balances.entry((user_id, asset)).or_insert(Balance::default()).available += qty; 
@@ -308,7 +327,7 @@ fn spawn_balance_thread(client:Client) -> Sender<BalanceActions> {
                         code: Code::DepositSuccess,
                         message: format!("Deposit successfull amount {}", qty)
                     })).expect("serde error");
-                let _: Result<(), _> = redis_conn.publish(client_id, payload.to_string());
+                    balance_publisher.publish(client_id, payload);
                 },
                 BalanceActions::GetBalance(asset, user_id, client_id) => {
                     match balances.get(&(user_id,asset)){
@@ -325,7 +344,7 @@ fn spawn_balance_thread(client:Client) -> Sender<BalanceActions> {
                                         locked
                                     } 
                                 })).expect("serde error");
-                                let _: Result<(), _> = redis_conn.publish(client_id, payload.to_string());
+                            balance_publisher.publish(client_id, payload);
                             } else {
                                 eprintln!("failed to parse user balance");
                             }
@@ -340,7 +359,7 @@ fn spawn_balance_thread(client:Client) -> Sender<BalanceActions> {
                                     locked: "0".to_string()
                                 } 
                             })).expect("serde error");
-                            let _: Result<(), _> = redis_conn.publish(client_id, payload.to_string());
+                            balance_publisher.publish(client_id, payload);
                         }
                     }
                 }
@@ -350,14 +369,13 @@ fn spawn_balance_thread(client:Client) -> Sender<BalanceActions> {
     tx
 }
 
-fn spawn_market_thread(market:Market, redis_client:redis::Client,  balance_trasmitter: Sender<BalanceActions>) -> Sender<OrderbookActions>{
+fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublisher>,  balance_trasmitter: Sender<BalanceActions>) -> Sender<OrderbookActions>{
     let (market_tx, market_rx) = unbounded::<OrderbookActions>(); // normal mpsc channel but with no limit. since we
     // will handle many messages. although if orderbook matching gets slowed but the incoming
     // orders keeps flowing then this will increase indefenitely. fine for this
     // but worth considering using bounded(n) with some limit later for robustness 
 
     thread::spawn(move || {// spawn each orderbook/market
-        let mut redis_conn = redis_client.get_connection().unwrap(); // sync connection
 
         let mut orderbook = Orderbook::new(market);
 
@@ -369,11 +387,15 @@ fn spawn_market_thread(market:Market, redis_client:redis::Client,  balance_trasm
             match val {
                OrderbookActions::CreateOrder(payload, client_id) => {
                     // validate and lock funds
+                    println!("order came {:?}" , payload.order_side);
                     let res = validate_and_lock(payload.user_id, payload.price, payload.quantity, 
                         payload.order_side.clone(), payload.symbol, balance_trasmitter.clone());
 
+                    println!("create order arm after validate lock {:?}" , payload.order_side);
+
                     match res {
                         Ok(ValidateAndLockResponse::Success) => { // if success create order and
+                            println!("Success validate lock arm {:?}" , payload.order_side);
                             // add
                             let (balance_settle_tx,balance_settle_rx) = bounded::<SettleResult>(1);
                             let order = Order {
@@ -386,6 +408,7 @@ fn spawn_market_thread(market:Market, redis_client:redis::Client,  balance_trasm
                                 filled: 0
                             };
                             let (executed_qty, order_status, fills, order_id) = orderbook.add_order(order); // get the fills and change balances
+                            println!("after add_order{:?}" , payload.order_side);
                             let _ = balance_trasmitter.clone().send(BalanceActions::SettleFills(SettleFillsData {
                                 fills,
                                 side: payload.order_side,
@@ -405,7 +428,7 @@ fn spawn_market_thread(market:Market, redis_client:redis::Client,  balance_trasm
                                         order_status
                                     })).expect("serde error");
 
-                                    let _: Result<(), _> = redis_conn.publish(client_id, payload);
+                                    market_publisher.publish(client_id, payload);
                                     // this thread publishes to client directly- no round trip to engine
                                 }
                             } else {
@@ -419,14 +442,14 @@ fn spawn_market_thread(market:Market, redis_client:redis::Client,  balance_trasm
                                 message: "Please deposit some asset to trade".to_string()
                             })).expect("serde error");
 
-                            let _: Result<(), _> = redis_conn.publish(client_id, payload);
+                            market_publisher.publish(client_id, payload);
                         },
                         Ok(ValidateAndLockResponse::Overflow) => {
                         let payload = serde_json::to_string(&MessageToApi::OrderRejected(ResponsePayload {
                                 code: InvalidPriceOrQuantity,
                                 message: "Please enter valid price or quantity".to_string()
                             })).expect("serde error");
-                        let _: Result<(), _> = redis_conn.publish(client_id, payload);
+                            market_publisher.publish(client_id, payload);
                         }
                         Err(err) => {
                             eprintln!("balance thread is unreachable, recv error {}", err);
@@ -449,7 +472,7 @@ fn spawn_market_thread(market:Market, redis_client:redis::Client,  balance_trasm
                                         order_status: OrderStatus::Cancelled,
                                         quantity: cancelled_order.quantity
                                     })).expect("serde error");
-                                let _: Result<(), _> = redis_conn.publish(client_id, payload);
+                            market_publisher.publish(client_id, payload);
                                 }
                             } else {
                                 println!("balance thread recv Error");
@@ -461,7 +484,7 @@ fn spawn_market_thread(market:Market, redis_client:redis::Client,  balance_trasm
                                 code: e.clone().into(), // implemented From Error for Code
                                 message: format!("{}",e)
                             })).expect("serde error");
-                            let _: Result<(), _> = redis_conn.publish(client_id, payload);
+                            market_publisher.publish(client_id, payload);
                         }
 
                     };
@@ -472,7 +495,7 @@ fn spawn_market_thread(market:Market, redis_client:redis::Client,  balance_trasm
                     let depth = orderbook.get_depth();
                     // publish
                     let payload = serde_json::to_string(&MessageToApi::GetDepth(depth)).expect("serde error");
-                    let _: Result<(), _> = redis_conn.publish(client_id, payload);
+                            market_publisher.publish(client_id, payload);
                 },
                 OrderbookActions::GetOpenOrders(payload, client_id) => {
                     let open_orders = orderbook.get_open_orders(payload.user_id);
@@ -480,7 +503,7 @@ fn spawn_market_thread(market:Market, redis_client:redis::Client,  balance_trasm
                     let payload = serde_json::to_string(&MessageToApi::GetOpenOrders(GetOpenOrderPayload {
                         orders :open_orders
                     })).expect("serde error");
-                    let _: Result<(), _> = redis_conn.publish(client_id, payload);
+                    market_publisher.publish(client_id, payload);
                 }
             };
         }
