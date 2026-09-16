@@ -12,7 +12,7 @@ pub use depth::*;
 use serde::{Deserialize, Serialize};
 use strum::EnumString;
 
-#[derive(Serialize, Deserialize, EnumString)]
+#[derive(Serialize, Deserialize, EnumString ,Debug, PartialEq)]
 pub enum Asset{
     SOL,
     BTC,

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, num::TryFromIntError, thread};
 use crossbeam_channel::{RecvError, Sender, bounded, unbounded};
-use redis::{AsyncCommands, Commands, aio::MultiplexedConnection};
+use redis::{AsyncCommands, aio::MultiplexedConnection};
 use rust_decimal::{Decimal, prelude::FromPrimitive};
 use rustc_hash::FxHashMap;
 use serde::Serialize;

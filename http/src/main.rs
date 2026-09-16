@@ -1,21 +1,11 @@
-pub mod types;
-pub mod routes;
-pub mod redis;
-pub mod error;
-pub mod entities;
-
 use std::env;
 
+use rust_cex::redis::redis_manager::RedisManager;
+use rust_cex::routes::order::order;
+use rust_cex::routes::{auth_middleware, cancel_order, deposit, get_balance, get_orders, onramp, signin, signup};
 use sea_orm::{ Database };
 use actix_web::middleware::{ from_fn};
 use actix_web::{App,  HttpServer,  web::{ self}};
-
-use crate::redis::redis_manager::RedisManager;
-use crate::routes::order::order;
-use crate::routes::{auth_middleware, cancel_order, deposit, get_balance, get_orders, onramp};
-use crate::routes::auth::{signin, signup};
-
-pub const SCALE_FACTOR: u64= 100_000_000;
 
 #[actix_web::main] // this executre the main function in actix web runtime or tokio runtime
 async fn main() -> std::io::Result<()> {

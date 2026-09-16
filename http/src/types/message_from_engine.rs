@@ -85,13 +85,13 @@ pub struct GetOpenOrderPayload {
     pub orders: Vec<Order>
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct GetBalance {
     pub available: String,
     pub locked: String
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct GetBalancePayload {
     pub asset: Asset,
     pub balance: GetBalance
@@ -110,7 +110,7 @@ pub enum MessageFromEngine {
     DepositResponse(ResponsePayload)
 }
 
-#[derive(serde::Serialize, Deserialize)]
+#[derive(serde::Serialize, Deserialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Code {
     InsufficientFunds,
