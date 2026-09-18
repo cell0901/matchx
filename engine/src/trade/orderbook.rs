@@ -13,7 +13,8 @@ pub struct Fill{
     pub price: u64,
     pub quantity: u64,
     pub user_id: Uuid,
-    pub other_user_id: Uuid
+    pub other_user_id: Uuid,
+    pub trade_id: u64,
 }
 
 #[derive(Clone, PartialEq, Eq, Copy, Hash, Deserialize, Serialize)]
@@ -193,14 +194,17 @@ impl Orderbook{
                 }
                 
                 let trade_qty = remaining_quantity.min(resting_ask.quantity);
+
+                self.last_trade_id += 1; // on each fill 
+                //
                 fills.push(Fill {
                     price: best_ask_price,
                     quantity: trade_qty,
                     user_id: order.user_id,
-                    other_user_id: resting_ask.user_id
+                    other_user_id: resting_ask.user_id,
+                    trade_id: self.last_trade_id
                 });
                 
-                self.last_trade_id += 1; // on each fill
                 
                 remaining_quantity -= trade_qty; // decrease the remaining_quantity
                 resting_ask.filled += trade_qty; // increase the other user filled qty
@@ -248,11 +252,15 @@ impl Orderbook{
                 }  
 
                 let trade_qty = remaining_quantity.min(resting_bid.quantity);
+
+                self.last_trade_id +=1;
+
                 fills.push(Fill {
                     price: best_bid_price,
                     quantity: trade_qty,
                     user_id: order.user_id,
-                    other_user_id: resting_bid.user_id
+                    other_user_id: resting_bid.user_id,
+                    trade_id: self.last_trade_id
                 });
 
                 self.last_trade_id += 1; // on each fill
