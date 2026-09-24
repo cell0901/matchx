@@ -41,6 +41,17 @@ pub enum Asset{
     USDC
 }
 
+impl Asset {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Asset::SOL=> "SOL",
+            Asset::BTC=> "BTC",
+            Asset::ETH=> "ETH",
+            Asset::HYPE=> "HYPE",
+            Asset::USDC=> "USDC",
+        }
+    }
+}
 pub enum BalanceActions {
     ValidateAndLockFunds(ValidateAndLockData),
     SettleFills(SettleFillsData),

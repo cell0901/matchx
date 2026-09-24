@@ -9,6 +9,7 @@ pub type Price= u64;
 pub type CurrentPrice= u64;
 pub type UserId = Uuid;
 
+#[derive(Clone)]
 pub struct Fill{
     pub price: u64,
     pub quantity: u64,
@@ -263,7 +264,6 @@ impl Orderbook{
                     trade_id: self.last_trade_id
                 });
 
-                self.last_trade_id += 1; // on each fill
                 
                 remaining_quantity -= trade_qty;
                 println!("sell order resting_bid: {:?} and trade_qty {:?}", resting_bid, trade_qty);

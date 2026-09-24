@@ -5,8 +5,9 @@ use rust_decimal::{Decimal, prelude::FromPrimitive};
 use rustc_hash::FxHashMap;
 use serde::Serialize;
 use uuid::Uuid;
-use crate::{trade::{Asset, BalanceActions, MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse, publisher::{NullPublisher, RedisPublisher, ResultPublisher}}, types::{Code::{self, InsufficientFunds, InvalidMarket, InvalidPriceOrQuantity, ServerError}, GetBalance, GetBalanceResponse, GetOpenOrderPayload, MessageFromApi, 
-        MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, ResponsePayload }};
+use crate::{trade::{Asset, BalanceActions, MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse, publisher::{NullPublisher, RedisPublisher, ResultPublisher}}, types::{Code::{self, InsufficientFunds, 
+    InvalidMarket, InvalidPriceOrQuantity, ServerError}, GetBalance, GetBalanceResponse, GetOpenOrderPayload, MessageFromApi, 
+    MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, ResponsePayload, TradePublishData, WsPublisherActions }};
 
 #[derive(Debug, Serialize)]
 pub struct Balance {
@@ -41,7 +42,15 @@ impl Engine {
             Box::new(RedisPublisher::new(redis_client.clone()))
         };
 
+        let ws_publisher: Box<dyn ResultPublisher> = if is_benchmark {
+            Box::new(NullPublisher)
+        } else {
+            Box::new(RedisPublisher::new(redis_client.clone()))
+        };
+
         let balance_sender = spawn_balance_thread(balance_publisher);
+        let ws_publisher_sender  = spawn_ws_publisher(ws_publisher);
+
         let mut market_senders = HashMap::new();
         for market in MARKETS {
             let market_publisher: Box<dyn ResultPublisher> = if is_benchmark {
@@ -49,7 +58,7 @@ impl Engine {
             } else {
                 Box::new(RedisPublisher::new(redis_client.clone()))
             };
-            let market_tx = spawn_market_thread(market, market_publisher, balance_sender.clone());
+            let market_tx = spawn_market_thread(market, market_publisher, balance_sender.clone(), ws_publisher_sender.clone());
             market_senders.insert(market, market_tx);
         };
 
@@ -369,7 +378,7 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
     tx
 }
 
-fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublisher>,  balance_trasmitter: Sender<BalanceActions>) -> Sender<OrderbookActions>{
+fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublisher>,  balance_trasmitter: Sender<BalanceActions>, ws_publisher:Sender<WsPublisherActions>) -> Sender<OrderbookActions>{
     let (market_tx, market_rx) = unbounded::<OrderbookActions>(); // normal mpsc channel but with no limit. since we
     // will handle many messages. although if orderbook matching gets slowed but the incoming
     // orders keeps flowing then this will increase indefenitely. fine for this
@@ -410,8 +419,8 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                             let (executed_qty, order_status, fills, order_id) = orderbook.add_order(order); // get the fills and change balances
                             println!("after add_order{:?}" , payload.order_side);
                             let _ = balance_trasmitter.clone().send(BalanceActions::SettleFills(SettleFillsData {
-                                fills,
-                                side: payload.order_side,
+                                fills: fills.clone(),
+                                side: payload.order_side.clone(),
                                 base_asset: payload.symbol.base,
                                 quote_asset: payload.symbol.quote,
                                 resp: balance_settle_tx
@@ -422,14 +431,29 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                 if val == SettleResult::Success {
                                     // return order success created with executed_qty and
                                     // order_status
-                                    let payload = serde_json::to_string(&MessageToApi::OrderPlaced(OrderPlacedPayload {
+                                    let res_payload = serde_json::to_string(&MessageToApi::OrderPlaced(OrderPlacedPayload {
                                         order_id: order_id,
                                         executed_quantity: executed_qty,
                                         order_status
                                     })).expect("serde error");
 
-                                    market_publisher.publish(client_id, payload);
+                                    market_publisher.publish(client_id, res_payload);
                                     // this thread publishes to client directly- no round trip to engine
+
+                                    // publish trade update 
+                                    for fill in fills {
+                                        let payload = TradePublishData {
+                                            symbol:payload.symbol,
+                                            price: fill.price,
+                                            quantity: fill.quantity,
+                                            order_side: payload.order_side.clone(),
+                                            other_user_id: fill.other_user_id,
+                                            trade_id: fill.trade_id
+                                        };
+                                        let _ = ws_publisher.send(WsPublisherActions::PubishTrade(payload));
+                                    };
+                                    
+
                                 }
                             } else {
                                 println!("balance thread recv Error");
@@ -548,4 +572,30 @@ pub fn u64_to_string(value: u64) -> Result<String, &'static str> {
         / scale_factor;
 
     Ok(dec.normalize().to_string())
+}
+
+fn spawn_ws_publisher(mut ws_publisher: Box<dyn ResultPublisher>) -> Sender<WsPublisherActions> {
+    let (tx,rx) = unbounded::<WsPublisherActions>();
+
+    thread::spawn(move || {
+        while let Ok(val) = rx.recv() {
+            match val {
+                WsPublisherActions::PubishTrade(data) => {
+                    let payload = serde_json::to_string(&data).expect("error while Serialize");
+                    // get the trade.<symbol>
+                    let channel = format!("trade.{}_{}", data.symbol.base.as_str(), data.symbol.quote.as_str());
+                    ws_publisher.publish(channel, payload);
+                },
+                WsPublisherActions::DepthUpdate(data) => {
+                    let payload = serde_json::to_string(&data).expect("error while Serialize");
+                    // get the depth.<symbol>
+                    let channel = format!("depth.{}_{}", data.symbol.base.as_str(), data.symbol.quote.as_str());
+                    ws_publisher.publish(channel, payload);
+                }
+            }
+
+        }
+    });
+
+    tx
 }

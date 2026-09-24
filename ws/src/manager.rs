@@ -1,6 +1,6 @@
 use std::{collections::{HashMap, HashSet}, env, sync::Arc };
 
-use actix_web::web::Data;
+use actix_web::{web::Data};
 use actix_ws::{AggregatedMessage, AggregatedMessageStream, Session};
 use futures_util::StreamExt;
 use redis::{Client};
@@ -87,6 +87,20 @@ impl UserManager {
         if let Some(user) = self.users.write().await.get_mut(connection_id) {
             user.subscriptions.retain(|s| s != param); // removes all elements for this condition
             // returns false
+        }
+
+        // unsubscribe from pubusb if everyone unsubscribed
+        let param_str = param.to_string();
+        // this returns true if every users subscriptions array doesnt contains 'param'
+        let none_subscribed = self.users.read().await.iter().all(|(_,info)| !info.subscriptions.contains(&param_str));
+        
+        if none_subscribed {
+            // unsubscribe from the pubsub
+            let mut channels = self.active_channels.write().await;
+            if channels.remove(param) { // true if value was present and removed
+                let mut pubsub = self.client.get_async_pubsub().await.expect("getting pubsub error");
+                pubsub.unsubscribe(param).await.expect("error while unsubscribing");
+            }
         }
     }
 
