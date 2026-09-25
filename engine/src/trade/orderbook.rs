@@ -36,6 +36,14 @@ pub struct Order{
     pub filled: u64 // how much quantity filled
 }
 
+#[derive(Deserialize, Serialize)]
+pub struct DepthDelta {
+    pub side: OrderSide,
+    pub price: Price,
+    pub new_total_qty: u64 // 0 means the level is removed from orderbook, in the frontend the level
+                           // should be removed
+}
+
 
 #[derive(Serialize, Deserialize)]
 pub enum OrderStatus {
@@ -85,7 +93,7 @@ impl Orderbook{
         }
    }
 
-    pub fn add_order(&mut self, order: Order) -> (u64, OrderStatus, Vec<Fill>, Uuid) {
+    pub fn add_order(&mut self, order: Order) -> (u64, OrderStatus, Vec<Fill>, Uuid, Vec<DepthDelta>) {
        match order.order_type {
             OrderType::Limit => {
                 return self.fill_limit_order(order)
@@ -93,22 +101,23 @@ impl Orderbook{
             OrderType::Market => {
                 // IOC. if no order otherside then Cancelled. else partial and full fills.
                 println!("market order hit. implement function for this");
-                return  (4 as u64, OrderStatus::Cancelled, vec![], Uuid::now_v7())
+                return  (4 as u64, OrderStatus::Cancelled, vec![], Uuid::now_v7(), vec![])
             }
        };
     }
 
-    fn fill_limit_order(&mut self, order: Order) -> (u64, OrderStatus, Vec<Fill>, Uuid){
+    fn fill_limit_order(&mut self, order: Order) -> (u64, OrderStatus, Vec<Fill>, Uuid, Vec<DepthDelta>){
         match order.order_side {
             OrderSide::Buy => {
                 let mut order_status = OrderStatus::New;
-                let (executed_qty, fills) = self.match_bid(order.clone());
+                let (executed_qty, fills, mut deltas) = self.match_bid(order.clone());
                 
                 if executed_qty == order.quantity {
                     // return executed_quantity nd order status (Filled)
-                    return (executed_qty, OrderStatus::Filled, fills, order.order_id);
+                    return (executed_qty, OrderStatus::Filled, fills, order.order_id, deltas);
                 }
 
+                // if all order quantity is not filled. then insert to bids
                 let final_order = Order {
                     order_id: order.order_id,
                     price: order.price,
@@ -121,9 +130,9 @@ impl Orderbook{
 
                 // if value for this key doesnt exist then insert with empty VecDeque. else return
                 // with mutable ref to the value
-                let a = self.bids.entry(order.price)
+                let level = self.bids.entry(order.price)
                     .or_insert_with(|| VecDeque::new());
-                a.push_back(final_order); // for same price the new order will be at last. and
+                level.push_back(final_order); // for same price the new order will be at last. and
                 // will we will pop from front
                 self.order_index.insert(order.order_id, OrderLocation { side: order.order_side, price: order.price });
                 // create the HashSet if doesnt exist and insert with order_id
@@ -131,20 +140,27 @@ impl Orderbook{
                 if executed_qty > 0 {
                     order_status = OrderStatus::PartiallyFilled;
                 } 
-                let json= serde_json::to_string_pretty(&self.bids);
-                let json2=  serde_json::to_string_pretty(&self.asks);
-                println!("orderbook after buy /order bids: {}", json.unwrap());
-                println!("orderbook after buy /order asks: {}", json2.unwrap());
-                return (executed_qty , order_status, fills, order.order_id);
+
+                // if the order is PartiallyFilled then deltas of fills and this new order as as
+                // delta should also be added 
+                let level_orders = self.bids.get(&order.price).unwrap();
+                let qty_at_level:u64 = level_orders.iter().map(|order| order.quantity -order.filled).sum();
+                deltas.push(DepthDelta { side: OrderSide::Buy, price: order.price, new_total_qty: qty_at_level });
+
+                // let json= serde_json::to_string_pretty(&self.bids);
+                // let json2=  serde_json::to_string_pretty(&self.asks);
+                // println!("orderbook after buy /order bids: {}", json.unwrap());
+                // println!("orderbook after buy /order asks: {}", json2.unwrap());
+                return (executed_qty , order_status, fills, order.order_id, deltas);
             },
             OrderSide::Sell => {
                 let mut order_status = OrderStatus::New;
 
                 println!("sell order came {}", order.quantity);
-                let (executed_qty, fills) = self.match_ask(order.clone()); 
+                let (executed_qty, fills, mut deltas) = self.match_ask(order.clone()); 
                 println!("sell order after match ask{}", order.quantity);
                 if executed_qty == order.quantity {
-                    return (executed_qty, OrderStatus::Filled, fills, order.order_id);
+                    return (executed_qty, OrderStatus::Filled, fills, order.order_id, deltas);
                 }
                 let final_order = Order {
                     order_id: order.order_id,
@@ -163,18 +179,26 @@ impl Orderbook{
                 if executed_qty > 0 {
                     order_status = OrderStatus::PartiallyFilled;
                 } 
-                let json= serde_json::to_string_pretty(&self.bids);
-                let json2=  serde_json::to_string_pretty(&self.asks);
-                println!("orderbook after sell /order bids: {}", json.unwrap());
-                println!("orderbook after sell /order asks: {}", json2.unwrap());
-                return (executed_qty, order_status, fills, order.order_id);
+
+                let level_orders = self.asks.get(&order.price).unwrap();
+
+                let qty_at_level:u64 = level_orders.iter().map(|order| order.quantity - order.filled).sum();
+
+                deltas.push(DepthDelta { side: OrderSide::Sell, price: order.price, new_total_qty: qty_at_level });
+
+                // let json= serde_json::to_string_pretty(&self.bids);
+                // let json2=  serde_json::to_string_pretty(&self.asks);
+                // println!("orderbook after sell /order bids: {}", json.unwrap());
+                // println!("orderbook after sell /order asks: {}", json2.unwrap());
+                return (executed_qty, order_status, fills, order.order_id, deltas);
             }
         }
     }
 
-    fn match_bid(&mut self, order: Order)-> ( u64, Vec<Fill>) {
+    fn match_bid(&mut self, order: Order)-> ( u64, Vec<Fill>, Vec<DepthDelta>) {
         let mut fills: Vec<Fill> = Vec::new();  // maintain fills to send to it ws stream in future
         let mut remaining_quantity = order.quantity;
+        let mut touched_prices: HashSet<Price> = HashSet::new();
 
         while remaining_quantity > 0 {
             let best_ask_price =match self.asks.keys().next(){
@@ -184,6 +208,8 @@ impl Orderbook{
             if best_ask_price > order.price {
                 break; // best ask too expensive break
             };
+
+            touched_prices.insert(best_ask_price);
            
             // get the price level orders array
             let level = self.asks.get_mut(&best_ask_price).unwrap();
@@ -194,7 +220,7 @@ impl Orderbook{
                     break; // everything filled
                 }
                 
-                let trade_qty = remaining_quantity.min(resting_ask.quantity);
+                let trade_qty = remaining_quantity.min(resting_ask.quantity - resting_ask.filled);
 
                 self.last_trade_id += 1; // on each fill 
                 //
@@ -227,13 +253,24 @@ impl Orderbook{
             }
         }
 
-        (order.quantity - remaining_quantity, fills) // executed_quantity and fills
+        // for all touched price cal the depth Delta
+        let deltas: Vec<DepthDelta> = touched_prices.into_iter().map(|price| {
+            // gets the remaining_quantity for that price level users can trade with
+            let qty = self.asks.get(&price).map(|orders| orders.iter().map(|order| order.quantity - order.filled).sum())
+                .unwrap_or(0); // the value for this price value might not actualy exist so we
+                               // handle the option with return 0
+            DepthDelta {side: OrderSide::Sell, price: price, new_total_qty: qty} // since we are
+                                                                                 // changing the asks
+        }).collect();
+
+        (order.quantity - remaining_quantity, fills, deltas) // executed_quantity and fills
         
     }
 
-    fn match_ask(&mut self, order: Order) -> (u64, Vec<Fill>){
+    fn match_ask(&mut self, order: Order) -> (u64, Vec<Fill>, Vec<DepthDelta>){
         let mut fills: Vec<Fill>  = Vec::new();
         let mut remaining_quantity = order.quantity;
+        let mut touched_prices: HashSet<Price> = HashSet::new();
 
         while remaining_quantity > 0 {
             let best_bid_price = match self.bids.keys().next_back(){ // to get higest to lowest bid
@@ -245,6 +282,8 @@ impl Orderbook{
                 break;
             }
 
+            touched_prices.insert(best_bid_price);
+
             let level = self.bids.get_mut(&best_bid_price).unwrap();
 
             while let Some(resting_bid) = level.front_mut() {
@@ -252,7 +291,7 @@ impl Orderbook{
                     break;
                 }  
 
-                let trade_qty = remaining_quantity.min(resting_bid.quantity);
+                let trade_qty = remaining_quantity.min(resting_bid.quantity- resting_bid.filled);
 
                 self.last_trade_id +=1;
 
@@ -282,8 +321,16 @@ impl Orderbook{
             if level.is_empty() { 
                 self.bids.remove(&best_bid_price); // remove the bid
             }
+
         }
-        (order.quantity - remaining_quantity, fills) // executed_quantity and fills
+
+        let deltas: Vec<DepthDelta> = touched_prices.into_iter().map(|price| {
+                let qty = self.bids.get(&price).map(|orders| orders.iter().map(|order| order.quantity - order.filled).sum()).unwrap_or(0);
+
+                DepthDelta {side: OrderSide::Buy, price, new_total_qty: qty}
+            }).collect();
+
+        (order.quantity - remaining_quantity, fills, deltas) // executed_quantity and fills
     }
 
     pub fn cancel_order(&mut self, order_id: Uuid, user_id: Uuid ) -> Result<Order, OrderCancelError> { // returnns

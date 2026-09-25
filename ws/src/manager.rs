@@ -4,10 +4,11 @@ use actix_web::{web::Data};
 use actix_ws::{AggregatedMessage, AggregatedMessageStream, Session};
 use futures_util::StreamExt;
 use redis::{Client};
+use rust_decimal::{Decimal, prelude::FromPrimitive};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::types::{FromClient, FromEngine, Method};
+use crate::types::{FromClient, FromEngine, Method, OrderSide, SCALE_FACTOR};
 
 pub struct UserManager{
     pub users : Arc<RwLock<HashMap<String, UserInfo>>>, // random id (or the client ws session address)
@@ -113,10 +114,31 @@ impl UserManager {
             match msg.get_payload::<String>() {
                 Ok(val) => {
                     match serde_json::from_str::<FromEngine>(&val) {
-                        Ok(payload) => {
-                            let out = serde_json::to_string(&payload).unwrap_or_default();
+                        Ok(FromEngine::DepthUpdate(data)) => {
+                            let mut bids: Vec<[String; 2]> = vec![];  // [["price_level", "total_qty"]]
+                            let mut asks: Vec<[String; 2]> = vec![];
+
+                            for delta in data.depth_deltas {
+                                // [["price_level", "total_qty"]]
+                                let pair = [u64_to_string(delta.price).unwrap_or_default(), u64_to_string(delta.new_total_qty).unwrap_or_default()];
+                                match delta.side {
+                                    OrderSide::Buy => bids.push(pair),
+                                    OrderSide::Sell=> asks.push(pair),
+                                }
+                            }
+
+                            let out = serde_json::to_string(&serde_json::json!({
+                                "symbol": format!("{}_{}", data.symbol.base.as_str(), data.symbol.quote.as_str()),
+                                "bids": bids,
+                                "asks": asks
+                            })).unwrap_or_default();
+
+                            self.broadcast(&channel, out).await;
+                        },
+                        Ok(other) => {
+                            let out = serde_json::to_string(&other).unwrap_or_default();
                             self.broadcast(&channel, out).await; // fan-out lives here, once
-                        }
+                        },
                         Err(e) => eprintln!("deserialize error on {channel}: {e}"),
                     }            
                 },
@@ -173,4 +195,15 @@ pub async fn handle_connection(users: Data<UserManager>, mut stream: AggregatedM
         };
 
     };
+}
+
+pub fn u64_to_string(value: u64) -> Result<String, &'static str> {
+    let scale_factor = Decimal::from_u64(SCALE_FACTOR)
+        .ok_or("Failed to convert scale_factor to decimal")?;
+
+    let dec = Decimal::from_u64(value)
+        .ok_or("Failed to convert value to decimal")?
+        / scale_factor;
+
+    Ok(dec.normalize().to_string())
 }

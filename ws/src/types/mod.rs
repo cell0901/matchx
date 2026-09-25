@@ -3,3 +3,5 @@ pub mod from_engine;
 
 pub use from_client::*;
 pub use from_engine::*;
+
+pub const SCALE_FACTOR: u64= 100_000_000;

@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{trade::Market, types::OrderSide};
+use crate::{trade::{DepthDelta, Market}, types::OrderSide};
 
 #[derive(Deserialize, Serialize)]
-pub struct TradePublishData {
+pub struct TradePublish {
     pub symbol: Market,
     pub price: u64,
     pub quantity: u64,
@@ -14,12 +14,17 @@ pub struct TradePublishData {
 }
 
 #[derive(Deserialize, Serialize)]
-pub struct DepthUpdateData {
+pub struct TradePublishData { // each trade updates channell message will have array of all fills
+    pub trades: Vec<TradePublish>
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct DepthUpdateMsg {
     pub symbol: Market, 
-    // TODO bids and asks remaining
+    pub depth_deltas: Vec<DepthDelta>
 }
 
 pub enum WsPublisherActions {
    PubishTrade(TradePublishData),
-   DepthUpdate(DepthUpdateData)
+   DepthUpdate(DepthUpdateMsg)
 }

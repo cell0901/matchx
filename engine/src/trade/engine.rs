@@ -6,8 +6,7 @@ use rustc_hash::FxHashMap;
 use serde::Serialize;
 use uuid::Uuid;
 use crate::{trade::{Asset, BalanceActions, MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse, publisher::{NullPublisher, RedisPublisher, ResultPublisher}}, types::{Code::{self, InsufficientFunds, 
-    InvalidMarket, InvalidPriceOrQuantity, ServerError}, GetBalance, GetBalanceResponse, GetOpenOrderPayload, MessageFromApi, 
-    MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, ResponsePayload, TradePublishData, WsPublisherActions }};
+    InvalidMarket, InvalidPriceOrQuantity, ServerError}, DepthUpdateMsg, GetBalance, GetBalanceResponse, GetOpenOrderPayload, MessageFromApi, MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, ResponsePayload, TradePublish, TradePublishData, WsPublisherActions }};
 
 #[derive(Debug, Serialize)]
 pub struct Balance {
@@ -416,7 +415,7 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                 order_type: payload.order_type,
                                 filled: 0
                             };
-                            let (executed_qty, order_status, fills, order_id) = orderbook.add_order(order); // get the fills and change balances
+                            let (executed_qty, order_status, fills, order_id, depth_deltas) = orderbook.add_order(order); // get the fills and change balances
                             println!("after add_order{:?}" , payload.order_side);
                             let _ = balance_trasmitter.clone().send(BalanceActions::SettleFills(SettleFillsData {
                                 fills: fills.clone(),
@@ -439,21 +438,26 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
 
                                     market_publisher.publish(client_id, res_payload);
                                     // this thread publishes to client directly- no round trip to engine
-
-                                    // publish trade update 
-                                    for fill in fills {
-                                        let payload = TradePublishData {
-                                            symbol:payload.symbol,
-                                            price: fill.price,
-                                            quantity: fill.quantity,
-                                            order_side: payload.order_side.clone(),
-                                            other_user_id: fill.other_user_id,
-                                            trade_id: fill.trade_id
-                                        };
-                                        let _ = ws_publisher.send(WsPublisherActions::PubishTrade(payload));
-                                    };
                                     
+                                    // batch at once. isntead of doing multiple .send for each fill
+                                    let trade_payloads: Vec<TradePublish> = fills.iter().map(|fill| TradePublish {
+                                        symbol: payload.symbol.clone(),
+                                        price: fill.price,
+                                        quantity: fill.quantity,
+                                        order_side: payload.order_side.clone(),
+                                        other_user_id: fill.other_user_id,
+                                        trade_id: fill.trade_id,
+                                    }).collect();
 
+                                    // publish to ws
+                                    let _ = ws_publisher.send(WsPublisherActions::PubishTrade(TradePublishData {
+                                        trades: trade_payloads 
+                                    }));
+
+                                    let _ = ws_publisher.send(WsPublisherActions::DepthUpdate(DepthUpdateMsg {
+                                        symbol: payload.symbol,
+                                        depth_deltas
+                                    }));
                                 }
                             } else {
                                 println!("balance thread recv Error");
@@ -581,10 +585,11 @@ fn spawn_ws_publisher(mut ws_publisher: Box<dyn ResultPublisher>) -> Sender<WsPu
         while let Ok(val) = rx.recv() {
             match val {
                 WsPublisherActions::PubishTrade(data) => {
-                    let payload = serde_json::to_string(&data).expect("error while Serialize");
-                    // get the trade.<symbol>
-                    let channel = format!("trade.{}_{}", data.symbol.base.as_str(), data.symbol.quote.as_str());
-                    ws_publisher.publish(channel, payload);
+                    let channel = format!("trade.{}_{}", data.trades[0].symbol.base.as_str(), data.trades[0].symbol.quote.as_str());
+                    for fill in data.trades {
+                        let payload = serde_json::to_string(&fill).expect("error while Serialize");
+                        ws_publisher.publish(channel.clone(), payload);
+                    };
                 },
                 WsPublisherActions::DepthUpdate(data) => {
                     let payload = serde_json::to_string(&data).expect("error while Serialize");

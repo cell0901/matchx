@@ -40,13 +40,34 @@ pub struct DepthLevel {
 }
 
 #[derive(Deserialize, Serialize)]
-pub struct DepthUpdateData{
-    symbol: Market,
-    bids: Vec<DepthLevel>
+pub struct DepthDelta {
+    pub side: OrderSide,
+    pub price: u64,
+    pub new_total_qty: u64 // 0 means the level is removed from orderbook, in the frontend the level
+                           // should be removed
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct DepthUpdateMsg {
+    pub symbol: Market, 
+    pub depth_deltas: Vec<DepthDelta>
 }
 
 #[derive(Deserialize, Serialize)]
 pub enum FromEngine { // rename the enum type while sending to client to data
-    TRADEPUBLISH(TradePublishData),
-    DEPTHUPDATE (DepthUpdateData)
+    TradeP(TradePublishData),
+    DepthUpdate(DepthUpdateMsg)
+}
+
+
+impl Asset {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Asset::SOL=> "SOL",
+            Asset::BTC=> "BTC",
+            Asset::ETH=> "ETH",
+            Asset::HYPE=> "HYPE",
+            Asset::USDC=> "USDC",
+        }
+    }
 }

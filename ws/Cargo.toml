@@ -13,3 +13,4 @@ redis = { version = "1.0.4", features = ["tokio-comp"] }
 uuid = { version = "1.14", features = ["v7", "serde"] }
 dotenvy = "0.15" #.env
 futures-util = "0.3.34"
+rust_decimal = "1.34" # or current version
