@@ -3,8 +3,8 @@ use uuid::Uuid;
 
 use crate::{trade::{DepthDelta, Market}, types::OrderSide};
 
-#[derive(Deserialize, Serialize)]
-pub struct TradePublish {
+#[derive(Deserialize, Serialize, Debug)]
+pub struct TradePublishMsg{
     pub symbol: Market,
     pub price: u64,
     pub quantity: u64,
@@ -13,18 +13,25 @@ pub struct TradePublish {
     pub trade_id: u64
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct TradePublishData { // each trade updates channell message will have array of all fills
-    pub trades: Vec<TradePublish>
+    pub trades: Vec<TradePublishMsg>
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct DepthUpdateMsg {
     pub symbol: Market, 
     pub depth_deltas: Vec<DepthDelta>
 }
 
+#[derive(Deserialize, Serialize )]
 pub enum WsPublisherActions {
-   PubishTrade(TradePublishData),
+   PublishTrade(TradePublishData),
+   DepthUpdate(DepthUpdateMsg)
+}
+
+#[derive(Deserialize, Serialize )]
+pub enum ToWs {
+   PublishTrade(TradePublishMsg),
    DepthUpdate(DepthUpdateMsg)
 }

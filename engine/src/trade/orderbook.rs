@@ -18,7 +18,7 @@ pub struct Fill{
     pub trade_id: u64,
 }
 
-#[derive(Clone, PartialEq, Eq, Copy, Hash, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Eq, Copy, Hash, Deserialize, Serialize, Debug)]
 pub struct Market {
     pub base: Asset,
     pub quote: Asset
@@ -36,7 +36,7 @@ pub struct Order{
     pub filled: u64 // how much quantity filled
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct DepthDelta {
     pub side: OrderSide,
     pub price: Price,

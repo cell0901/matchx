@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Debug, Serialize)]
 pub struct Market {
     pub base: Asset,
     pub quote: Asset
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Debug, Serialize)]
 pub enum Asset{
     SOL,
     BTC,
@@ -17,7 +17,7 @@ pub enum Asset{
 }
 
 #[derive(Deserialize, Serialize)]
-pub struct TradePublishData {
+pub struct TradePublishMsg {
     symbol: Market,
     price: u64,
     quantity: u64,
@@ -26,7 +26,7 @@ pub struct TradePublishData {
     trade_id: u64
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum OrderSide {
     Buy,
     Sell
@@ -39,7 +39,7 @@ pub struct DepthLevel {
     quantity:u64  
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Debug, Serialize)]
 pub struct DepthDelta {
     pub side: OrderSide,
     pub price: u64,
@@ -47,7 +47,7 @@ pub struct DepthDelta {
                            // should be removed
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct DepthUpdateMsg {
     pub symbol: Market, 
     pub depth_deltas: Vec<DepthDelta>
@@ -55,7 +55,7 @@ pub struct DepthUpdateMsg {
 
 #[derive(Deserialize, Serialize)]
 pub enum FromEngine { // rename the enum type while sending to client to data
-    TradeP(TradePublishData),
+    PublishTrade(TradePublishMsg),
     DepthUpdate(DepthUpdateMsg)
 }
 

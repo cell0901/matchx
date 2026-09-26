@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 use serde::Serialize;
 use uuid::Uuid;
 use crate::{trade::{Asset, BalanceActions, MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse, publisher::{NullPublisher, RedisPublisher, ResultPublisher}}, types::{Code::{self, InsufficientFunds, 
-    InvalidMarket, InvalidPriceOrQuantity, ServerError}, DepthUpdateMsg, GetBalance, GetBalanceResponse, GetOpenOrderPayload, MessageFromApi, MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, ResponsePayload, TradePublish, TradePublishData, WsPublisherActions }};
+    InvalidMarket, InvalidPriceOrQuantity, ServerError}, DepthUpdateMsg, GetBalance, GetBalanceResponse, GetOpenOrderPayload, MessageFromApi, MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, ResponsePayload, ToWs, TradePublishData, TradePublishMsg, WsPublisherActions::{self} }};
 
 #[derive(Debug, Serialize)]
 pub struct Balance {
@@ -440,7 +440,7 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                     // this thread publishes to client directly- no round trip to engine
                                     
                                     // batch at once. isntead of doing multiple .send for each fill
-                                    let trade_payloads: Vec<TradePublish> = fills.iter().map(|fill| TradePublish {
+                                    let trade_payloads: Vec<TradePublishMsg> = fills.iter().map(|fill| TradePublishMsg {
                                         symbol: payload.symbol.clone(),
                                         price: fill.price,
                                         quantity: fill.quantity,
@@ -450,9 +450,12 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                     }).collect();
 
                                     // publish to ws
-                                    let _ = ws_publisher.send(WsPublisherActions::PubishTrade(TradePublishData {
-                                        trades: trade_payloads 
-                                    }));
+
+                                    if !trade_payloads.is_empty() {
+                                        let _ = ws_publisher.send(WsPublisherActions::PublishTrade(TradePublishData {
+                                            trades: trade_payloads 
+                                        }));
+                                    }
 
                                     let _ = ws_publisher.send(WsPublisherActions::DepthUpdate(DepthUpdateMsg {
                                         symbol: payload.symbol,
@@ -584,17 +587,21 @@ fn spawn_ws_publisher(mut ws_publisher: Box<dyn ResultPublisher>) -> Sender<WsPu
     thread::spawn(move || {
         while let Ok(val) = rx.recv() {
             match val {
-                WsPublisherActions::PubishTrade(data) => {
+                WsPublisherActions::PublishTrade(data) => {
+                    println!("inside ws publisher thread trade data: {:?}", data);
                     let channel = format!("trade.{}_{}", data.trades[0].symbol.base.as_str(), data.trades[0].symbol.quote.as_str());
                     for fill in data.trades {
-                        let payload = serde_json::to_string(&fill).expect("error while Serialize");
+                        let payload = serde_json::to_string(&ToWs::PublishTrade(fill)).expect("error while Serialize");
                         ws_publisher.publish(channel.clone(), payload);
                     };
                 },
                 WsPublisherActions::DepthUpdate(data) => {
-                    let payload = serde_json::to_string(&data).expect("error while Serialize");
+                    println!("inside ws publisher thread trade data: {:?}", data);
                     // get the depth.<symbol>
                     let channel = format!("depth.{}_{}", data.symbol.base.as_str(), data.symbol.quote.as_str());
+                    let payload = serde_json::to_string(&ToWs::DepthUpdate(data)).expect("error while Serialize");
+                    println!("after Serializing into string {}", payload);
+                    
                     ws_publisher.publish(channel, payload);
                 }
             }

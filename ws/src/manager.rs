@@ -113,6 +113,7 @@ impl UserManager {
         while let Some(msg) = stream.next().await {
             match msg.get_payload::<String>() {
                 Ok(val) => {
+                    println!("message from engine in string before deserialize {}", val);
                     match serde_json::from_str::<FromEngine>(&val) {
                         Ok(FromEngine::DepthUpdate(data)) => {
                             let mut bids: Vec<[String; 2]> = vec![];  // [["price_level", "total_qty"]]
@@ -139,7 +140,9 @@ impl UserManager {
                             let out = serde_json::to_string(&other).unwrap_or_default();
                             self.broadcast(&channel, out).await; // fan-out lives here, once
                         },
-                        Err(e) => eprintln!("deserialize error on {channel}: {e}"),
+                        Err(e) => {
+                            eprintln!("deserialize error on {channel}: {e}");
+                        }
                     }            
                 },
                 Err(_) => eprintln!("error while getting msg payload")
@@ -157,29 +160,51 @@ impl UserManager {
         }
     }
 
+    pub async fn broadcast_wrong_inputs(&self, connection_id: &str) {
+        let users = self.users.read().await;
+        let user = users.get(connection_id);
+        if let Some(val) = user {
+            let payload = serde_json::to_string(&serde_json::json!({
+                "error": {
+                    "message": "parse error"
+               }
+            })).unwrap(); // should not fail
+            let _ = val.tx.clone().text(payload).await;
+        };
+    }
+
 }
 
 pub async fn handle_connection(users: Data<UserManager>, mut stream: AggregatedMessageStream, connection_id: String) {
     while let Some(val) = stream.recv().await {
         match val{ 
             Ok(AggregatedMessage::Text(msg)) => {
-                let message: FromClient = serde_json::from_str(&msg).expect("error while Deserialize");
-                match message.method {
-                    Method::SUBSCRIBE => {
-                        // Todo- add check if its private stream. like starts with
-                        // "account.orderUpdate."
-                        for i in message.params.iter() {
-                            users.subscribe(&connection_id, i.to_string()).await;
-                        }
+                let val = serde_json::from_str::<FromClient>(&msg);
+
+                match val {
+                    Ok(message)=> {
+                        match message.method {
+                            Method::SUBSCRIBE => {
+                                // Todo- add check if its private stream. like starts with
+                                // "account.orderUpdate."
+                                for i in message.params.iter() {
+                                    users.subscribe(&connection_id, i.to_string()).await;
+                                }
+                            },
+                            Method::UNSUBSCRIBE => {
+                                // Todo- add check if its private stream.
+                                for i in message.params.iter() {
+                                    users.unsubscribe(&connection_id, i).await;
+                                }
+                            },
+                        };
+                    println!("msg {:?}", message);
                     },
-                    Method::UNSUBSCRIBE => {
-                        // Todo- add check if its private stream.
-                        for i in message.params.iter() {
-                            users.unsubscribe(&connection_id, i).await;
-                        }
+                    Err(_) => { // failed to deserialize
+                        users.broadcast_wrong_inputs(&connection_id).await;
                     }
-                };
-                println!("msg {:?}", message);
+                }
+                
             },
             Ok(AggregatedMessage::Close(reason)) => {// on connection close
                 // remove the entry 
