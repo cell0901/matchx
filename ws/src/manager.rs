@@ -8,9 +8,9 @@ use rust_decimal::{Decimal, prelude::FromPrimitive};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::types::{FromClient, FromEngine, Method, OrderSide, SCALE_FACTOR};
+use crate::types::{FromClient, FromEngine, Method, OrderSide, SCALE_FACTOR, VALID_PREFIX};
 
-pub struct UserManager{
+pub struct UserManager {
     pub users : Arc<RwLock<HashMap<String, UserInfo>>>, // random id (or the client ws session address)
     pub active_channels: Arc<RwLock<HashSet<String>>>, // dedup. which channels already have
     // listener. for eg for a chennel if new user comes and subscribes. and second user comes
@@ -160,7 +160,7 @@ impl UserManager {
         }
     }
 
-    pub async fn broadcast_wrong_inputs(&self, connection_id: &str) {
+    pub async fn wrong_inputs(&self, connection_id: &str) {
         let users = self.users.read().await;
         let user = users.get(connection_id);
         if let Some(val) = user {
@@ -173,6 +173,18 @@ impl UserManager {
         };
     }
 
+    // depth.SOL_USDC
+    pub fn is_valid_channel(&self, param:&str) -> bool{
+
+        let mut res: bool = false;
+        for i in VALID_PREFIX {
+            if let Some(_) = param.strip_prefix(i) {
+                res = true;
+                break;
+            } 
+        }
+        res
+    }
 }
 
 pub async fn handle_connection(users: Data<UserManager>, mut stream: AggregatedMessageStream, connection_id: String) {
@@ -188,6 +200,11 @@ pub async fn handle_connection(users: Data<UserManager>, mut stream: AggregatedM
                                 // Todo- add check if its private stream. like starts with
                                 // "account.orderUpdate."
                                 for i in message.params.iter() {
+                                    let is_valid = users.is_valid_channel(i);
+                                    if !is_valid {
+                                        users.wrong_inputs(&connection_id).await;
+                                        break;
+                                    }
                                     users.subscribe(&connection_id, i.to_string()).await;
                                 }
                             },
@@ -201,7 +218,7 @@ pub async fn handle_connection(users: Data<UserManager>, mut stream: AggregatedM
                     println!("msg {:?}", message);
                     },
                     Err(_) => { // failed to deserialize
-                        users.broadcast_wrong_inputs(&connection_id).await;
+                        users.wrong_inputs(&connection_id).await;
                     }
                 }
                 
