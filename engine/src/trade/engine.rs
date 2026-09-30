@@ -1,9 +1,9 @@
 use std::{collections::HashMap, num::TryFromIntError, thread};
 use crossbeam_channel::{RecvError, Sender, bounded, unbounded};
-use redis::{AsyncCommands, aio::MultiplexedConnection};
+use redis::{aio::MultiplexedConnection};
 use rust_decimal::{Decimal, prelude::FromPrimitive};
 use rustc_hash::FxHashMap;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::{trade::{Asset, BalanceActions, MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse, publisher::{NullPublisher, RedisPublisher, ResultPublisher}}, types::{Code::{self, InsufficientFunds, 
     InvalidMarket, InvalidPriceOrQuantity, ServerError}, DepthUpdateMsg, GetBalance, GetBalanceResponse, GetOpenOrderPayload, MessageFromApi, MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, ResponsePayload, ToWs, TradePublishData, TradePublishMsg, WsPublisherActions::{self} }};
@@ -12,6 +12,11 @@ use crate::{trade::{Asset, BalanceActions, MARKETS, Market, Order, OrderStatus, 
 pub struct Balance {
     pub available: u64,
     pub locked: u64
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub enum Origin {
+    Stream{entry_id: String}, // for xack
+    List // nothing to ack
 }
 
 impl Default for Balance {
@@ -69,24 +74,27 @@ impl Engine {
         }
     }
 
-    pub async fn process(&self, message: MessageFromApi, client_id: String) {
-        println!("process(), ran");
+    pub async fn process(&self, message: MessageFromApi, client_id: String, is_stream: Option<String>) {
+        let origin = match is_stream {
+            Some(entry_id) => Origin::Stream { entry_id },
+            None => Origin::List
+        };
+
         match message {
             MessageFromApi::CreateOrder(payload) => {
                 let market = payload.symbol;
                 let orderbook = self.market_senders.get(&market);
-
                 match orderbook {
                     Some(sender)  => {
-                        if let Err(e) = sender.send(OrderbookActions::CreateOrder(payload, client_id.clone())) {
+                        if let Err(e) = sender.send(OrderbookActions::CreateOrder(payload, client_id.clone(), origin.clone())) {
                             println!("market thread unreachable {}", e);
                             // early return to api. order rejected, market unavailable
-                        self.publish_rejection(client_id, "market unavailable. please try later".to_string(), ServerError).await;
+                        self.publish_rejection(client_id, "market unavailable. please try later".to_string(), ServerError, origin).await;
                         };
                     },
                     None => {
                         // return order rejected. invalid market
-                        self.publish_rejection(client_id, "market does not exist. Please enter valid market".to_string(), InvalidMarket).await;
+                        self.publish_rejection(client_id, "market does not exist. Please enter valid market".to_string(), InvalidMarket, origin).await;
                     }
                 };
             },
@@ -96,71 +104,80 @@ impl Engine {
 
                 match orderbook {
                     Some(sender)  => {
-                        if let Err(e) = sender.send(OrderbookActions::CancelOrder(payload, client_id.clone())) {
+                        if let Err(e) = sender.send(OrderbookActions::CancelOrder(payload, client_id.clone(), origin.clone())) {
                             println!("market thread unreachable {}", e);
                             // early return to api. order rejected, market unavailable
-                            self.publish_rejection(client_id, "market unavailable. please try later".to_string(), ServerError).await;
+                            self.publish_rejection(client_id, "market unavailable. please try later".to_string(), ServerError, origin).await;
                         };
                     },
                     None => {
                         // return order rejected. invalid market
-                        self.publish_rejection(client_id, "market does not exist. Please enter valid market".to_string(), InvalidMarket).await;
+                        self.publish_rejection(client_id, "market does not exist. Please enter valid market".to_string(), InvalidMarket, origin).await;
                     }
                 }
             },
             MessageFromApi::Onramp(payload) => { // increase the usdc amount for this user
-                let _ = self.balance_sender.send(BalanceActions::Onramp(payload.amount, payload.user_id, client_id));
+                let _ = self.balance_sender.send(BalanceActions::Onramp(payload.amount, payload.user_id, client_id, origin));
             },
             MessageFromApi::Deposit(payload) => { //
-                let _ = self.balance_sender.send(BalanceActions::Deposit(payload.asset, payload.quantity, payload.user_id, client_id));
+                let _ = self.balance_sender.send(BalanceActions::Deposit(payload.asset, payload.quantity, payload.user_id, client_id, origin));
             },
             MessageFromApi::GetOpenOrders(payload) => {
                 let orderbook = self.market_senders.get(&payload.symbol);
 
                 match orderbook {
                     Some(sender) => {
-                        if let Err(e) = sender.send(OrderbookActions::GetOpenOrders(payload, client_id.clone())) {
+                        if let Err(e) = sender.send(OrderbookActions::GetOpenOrders(payload, client_id.clone(), origin.clone())) {
                             eprintln!("market thread unreachable {}", e);
-                        self.publish_rejection(client_id, "market unavailable. please try later".to_string(), ServerError).await;
+                            self.publish_rejection(client_id, "market unavailable. please try later".to_string(), ServerError, origin).await;
                         }
                     },
                     None => {
                         // return invalid market
-                        self.publish_rejection(client_id, "market does not exist. Please enter valid market".to_string(), InvalidMarket).await;
+                        self.publish_rejection(client_id, "market does not exist. Please enter valid market".to_string(), InvalidMarket, origin).await;
                     }
 
                 };
             },
-            MessageFromApi::GetDepth(market) => {
+            MessageFromApi::GetDepth(market, origin) => {
                 let orderbook = self.market_senders.get(&market);
 
                 match orderbook {
                     Some(sender) => {
-                        let _ = sender.send(OrderbookActions::GetDepth(client_id));
+                        let _ = sender.send(OrderbookActions::GetDepth(client_id, origin));
                     },
                     None => {
                         // return invalid market
-                        self.publish_rejection(client_id, "market does not exist. Please enter valid market".to_string(), InvalidMarket).await;
+                        self.publish_rejection(client_id, "market does not exist. Please enter valid market".to_string(), InvalidMarket, origin).await;
                     }
 
                 };
             },
             MessageFromApi::GetBalance(payload) => {
                 println!("get balance MessageFromApi arm ");
-                let _ = self.balance_sender.send(BalanceActions::GetBalance(payload.asset, payload.user_id, client_id));
+                let _ = self.balance_sender.send(BalanceActions::GetBalance(payload.asset, payload.user_id, client_id, origin));
             }
         };
     }
 
-    async fn publish_rejection(&self, client_id: String, message: String, code: Code) {
+    async fn publish_rejection(&self, client_id: String, message: String, code: Code, origin: Origin){
         let mut conn = self.redis_conn.clone(); // multiplex clone is cheap
         
+        let mut pipe = redis::pipe();
         let payload = serde_json::to_string(&MessageToApi::OrderRejected(ResponsePayload {
             code: code,
             message
         })).expect("serde error");
 
-        let _: Result<(), _> = conn.publish(client_id, payload).await;
+        pipe.publish(client_id, payload).ignore(); // .ignore to ignore the return value from this
+                                                   // redis command
+        if let Origin::Stream { entry_id } = origin { // only xack in this case
+            pipe.xack("order:stream", "engine_group", &[entry_id]).ignore();
+        };
+
+        if let Err(e) = pipe.query_async::<()>(&mut conn).await {
+            eprintln!("reject/ack failed {}", e);
+        }
     }
 }
 
@@ -316,7 +333,7 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
                         }
                     }
                 },
-                BalanceActions::Onramp(amount, user_id, client_id) => {
+                BalanceActions::Onramp(amount, user_id, client_id, origin) => {
                  balances.entry((user_id, Asset::USDC)).or_insert(Balance::default()).available += amount; 
                     println!("balance after /onramp order {:?}", balances);
                     // send back to pub sub successfull
@@ -325,9 +342,9 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
                         message: format!("onramp successfull amount {}", amount)
                     })).expect("serde error");
 
-                    balance_publisher.publish(client_id, payload);
+                    balance_publisher.complete(client_id, payload, &origin);
                 },
-                BalanceActions::Deposit(asset, qty, user_id, client_id) => {
+                BalanceActions::Deposit(asset, qty, user_id, client_id, origin) => {
                  balances.entry((user_id, asset)).or_insert(Balance::default()).available += qty; 
                  // send back to pub sub successfull
                     println!("balance after /deposit order {:?}", balances);
@@ -335,9 +352,9 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
                         code: Code::DepositSuccess,
                         message: format!("Deposit successfull amount {}", qty)
                     })).expect("serde error");
-                    balance_publisher.publish(client_id, payload);
+                    balance_publisher.complete(client_id, payload, &origin);
                 },
-                BalanceActions::GetBalance(asset, user_id, client_id) => {
+                BalanceActions::GetBalance(asset, user_id, client_id, origin) => {
                     match balances.get(&(user_id,asset)){
                         Some(bal) => {
                             let parsed_avlbl = u64_to_string(bal.available);
@@ -352,7 +369,7 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
                                         locked
                                     } 
                                 })).expect("serde error");
-                            balance_publisher.publish(client_id, payload);
+                            balance_publisher.complete(client_id, payload, &origin);
                             } else {
                                 eprintln!("failed to parse user balance");
                             }
@@ -367,7 +384,7 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
                                     locked: "0".to_string()
                                 } 
                             })).expect("serde error");
-                            balance_publisher.publish(client_id, payload);
+                            balance_publisher.complete(client_id, payload, &origin);
                         }
                     }
                 }
@@ -393,7 +410,7 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
             // Get open orders
             // Get depth
             match val {
-               OrderbookActions::CreateOrder(payload, client_id) => {
+               OrderbookActions::CreateOrder(payload, client_id, origin) => {
                     // validate and lock funds
                     println!("order came {:?}" , payload.order_side);
                     let res = validate_and_lock(payload.user_id, payload.price, payload.quantity, 
@@ -436,7 +453,8 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                         order_status
                                     })).expect("serde error");
 
-                                    market_publisher.publish(client_id, res_payload);
+                                    // publishes back to api and acknowledges the message
+                                    market_publisher.complete(client_id, res_payload, &origin);
                                     // this thread publishes to client directly- no round trip to engine
                                     
                                     // batch at once. isntead of doing multiple .send for each fill
@@ -449,8 +467,8 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                         trade_id: fill.trade_id,
                                     }).collect();
 
-                                    // publish to ws
 
+                                    // publish to ws
                                     if !trade_payloads.is_empty() {
                                         let _ = ws_publisher.send(WsPublisherActions::PublishTrade(TradePublishData {
                                             trades: trade_payloads 
@@ -473,21 +491,21 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                 message: "Please deposit some asset to trade".to_string()
                             })).expect("serde error");
 
-                            market_publisher.publish(client_id, payload);
+                            market_publisher.complete(client_id, payload, &origin);
                         },
                         Ok(ValidateAndLockResponse::Overflow) => {
                         let payload = serde_json::to_string(&MessageToApi::OrderRejected(ResponsePayload {
                                 code: InvalidPriceOrQuantity,
                                 message: "Please enter valid price or quantity".to_string()
                             })).expect("serde error");
-                            market_publisher.publish(client_id, payload);
+                            market_publisher.complete(client_id, payload, &origin);
                         }
                         Err(err) => {
                             eprintln!("balance thread is unreachable, recv error {}", err);
                         }
                     };
                },
-                OrderbookActions::CancelOrder(payload, client_id) => {
+                OrderbookActions::CancelOrder(payload, client_id, origin) => {
                     let res = orderbook.cancel_order(payload.order_id, payload.user_id);
                     match res {
                         Ok(cancelled_order)  => { // if removed successfully. then update balances
@@ -503,7 +521,7 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                         order_status: OrderStatus::Cancelled,
                                         quantity: cancelled_order.quantity
                                     })).expect("serde error");
-                            market_publisher.publish(client_id, payload);
+                            market_publisher.complete(client_id, payload, &origin);
                                 }
                             } else {
                                 println!("balance thread recv Error");
@@ -515,26 +533,26 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                 code: e.clone().into(), // implemented From Error for Code
                                 message: format!("{}",e)
                             })).expect("serde error");
-                            market_publisher.publish(client_id, payload);
+                            market_publisher.complete(client_id, payload, &origin);
                         }
 
                     };
                 },
-                OrderbookActions::GetDepth(client_id)=> { // ideally we should change the way to get depth 
+                OrderbookActions::GetDepth(client_id, origin)=> { // ideally we should change the way to get depth 
                     // on starting as every order comes the http gets subs to engine and engine
                     // pubs every delta of order/cancel . http maintains local in memory depth
                     let depth = orderbook.get_depth();
                     // publish
                     let payload = serde_json::to_string(&MessageToApi::GetDepth(depth)).expect("serde error");
-                            market_publisher.publish(client_id, payload);
+                            market_publisher.complete(client_id, payload, &origin);
                 },
-                OrderbookActions::GetOpenOrders(payload, client_id) => {
+                OrderbookActions::GetOpenOrders(payload, client_id, origin) => {
                     let open_orders = orderbook.get_open_orders(payload.user_id);
                     // publish
                     let payload = serde_json::to_string(&MessageToApi::GetOpenOrders(GetOpenOrderPayload {
                         orders :open_orders
                     })).expect("serde error");
-                    market_publisher.publish(client_id, payload);
+                    market_publisher.complete(client_id, payload, &origin);
                 }
             };
         }

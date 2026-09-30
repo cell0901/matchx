@@ -1,6 +1,6 @@
 use redis::{AsyncCommands, AsyncConnectionConfig, Client, Value, streams::{StreamReadOptions, StreamReadReply}};
 
-use crate::{error::EngineError, trade::Engine, types::EngineMessage};
+use crate::{error::EngineError, trade::{Engine}, types::EngineMessage};
 
 pub async fn handle_stream(client: Client, engine: Engine) -> Result<(), EngineError>{
     let mut con = client.get_multiplexed_async_connection().await?; // using async connection to
@@ -27,7 +27,7 @@ pub async fn handle_stream(client: Client, engine: Engine) -> Result<(), EngineE
                     Value::BulkString(val) => {
                         let message: EngineMessage= serde_json::from_slice(&val).unwrap();
                         println!("message came inside handle_stream");
-                        engine.process(message.data, message.client_id).await;
+                        engine.process(message.data, message.client_id, Some(entry.id)).await;
                         // publish to pubsub the repsonse
                     },
                     _ => {
@@ -35,11 +35,9 @@ pub async fn handle_stream(client: Client, engine: Engine) -> Result<(), EngineE
                         // return order cancelled
                     }
                 };
-                // process send to engine
                 // only after the matching and every memory chanages are done. ack the message that
                 // it has been processed and not in Pending state
-
-                let _: i64 = con.xack("order:stream", "engine_group", &[entry.id]).await?;
+                // let _: i64 = con.xack("order:stream", "engine_group", &[entry.id]).await?;
             } 
         }
     }
@@ -66,7 +64,7 @@ pub async fn handle_queue(client: Client, engine:Engine)-> Result<(), EngineErro
             println!("message came inside queue");
 
             engine
-                .process(message.data, message.client_id)
+                .process(message.data, message.client_id, None)
                 .await;
         } else {
             println!("error while getting queue item");

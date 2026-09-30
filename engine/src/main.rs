@@ -9,8 +9,6 @@ use redis::RedisResult;
 
 use crate::{handle_incoming::{handle_queue, handle_stream}, trade::Engine};
 
-
-
 #[tokio::main]
 async fn main() -> RedisResult<()>{
     dotenvy::dotenv().expect("no .env exist");

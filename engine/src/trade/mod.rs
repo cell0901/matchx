@@ -56,9 +56,9 @@ pub enum BalanceActions {
     ValidateAndLockFunds(ValidateAndLockData),
     SettleFills(SettleFillsData),
     CancelAndUpdateBalance(Order, Market, Sender<SettleResult>), // using same enum for now
-    Onramp(u64, Uuid, String), // amount, user_id
-    Deposit(Asset, u64, Uuid, String),// asset, qty, user_id
-    GetBalance(Asset, Uuid, String)
+    Onramp(u64, Uuid, String, Origin), // amount, user_id
+    Deposit(Asset, u64, Uuid, String, Origin),// asset, qty, user_id
+    GetBalance(Asset, Uuid, String, Origin)
 }
 
 pub enum ValidateAndLockResponse{
@@ -93,10 +93,11 @@ pub struct ValidateAndLockData{
 
 }
 
+pub type EntryId = String;
 pub enum OrderbookActions{
-    CreateOrder(CreateOrderPayload, String), // clientId
-    CancelOrder(CancelOrderPayload, String),
-    GetOpenOrders(OpenOrderPayload, String), // ideally we should get open orders for users from in other in
+    CreateOrder(CreateOrderPayload, String, Origin), // clientId
+    CancelOrder(CancelOrderPayload, String, Origin),
+    GetOpenOrders(OpenOrderPayload, String, Origin), // ideally we should get open orders for users from in other in
     // memory logs or database
-    GetDepth(String)
+    GetDepth(String, Origin)
 }

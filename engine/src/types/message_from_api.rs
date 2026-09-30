@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::trade::{Asset, Market};
+use crate::trade::{Asset, Market, Origin};
 
 #[derive(Serialize, Deserialize)]
 pub struct EngineMessage {
@@ -16,7 +16,7 @@ pub enum MessageFromApi{
     Onramp(OnrampPayload),
     Deposit(DepositPayload),
     GetOpenOrders(OpenOrderPayload),
-    GetDepth(Market), // symbol
+    GetDepth(Market, Origin), // symbol
     GetBalance(GetBalancePayload)
 }
 
