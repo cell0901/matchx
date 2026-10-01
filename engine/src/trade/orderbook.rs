@@ -333,10 +333,11 @@ impl Orderbook{
         (order.quantity - remaining_quantity, fills, deltas) // executed_quantity and fills
     }
 
-    pub fn cancel_order(&mut self, order_id: Uuid, user_id: Uuid ) -> Result<Order, OrderCancelError> { // returnns
+    pub fn cancel_order(&mut self, order_id: Uuid, user_id: Uuid ) -> Result<(Order, DepthDelta), OrderCancelError> { // returnns
         // filled quantity
-        println!("cancel_order engine hit");
         let location = self.order_index.get(&order_id).ok_or(OrderCancelError::OrderNotFound)?;
+        let price = location.price;
+        let order_side  = location.side.clone();
 
         let cancelled_order;
         let side = match location.side {
@@ -348,15 +349,12 @@ impl Orderbook{
 
         let level = side.get_mut(&location.price).ok_or(OrderCancelError::OrderNotFound)?; // this should
         // exist. because we already add a check before to check in order_index
-
-        println!("after finding level");
         // in that level find the order_id index that matches
         let pos = level.iter().position(|o| o.order_id == order_id);
 
         match pos {
             Some(index) => {
                 let order = &level[index];
-                println!("the cancel_order order {:?}", order);
                 if order.user_id != user_id {
                     return  Err(OrderCancelError::Unauthorized); // dont let other users cancel other's
                     // orders
@@ -365,7 +363,6 @@ impl Orderbook{
                 level.remove(index); // remove from VecDeque
             },
             None =>  {
-                println!("inside none case");
                 return  Err(OrderCancelError::OrderNotFound);
             }
         }
@@ -381,7 +378,15 @@ impl Orderbook{
                 orders.remove(&cancelled_order.order_id);
         };
 
-        Ok(cancelled_order)
+        // compute remaining qty at this level after removal
+        let remaining_qty: u64 = match order_side {
+            OrderSide::Buy => self.bids.get(&price),
+            OrderSide::Sell => self.asks.get(&price),
+        }.map(|deque| deque.iter().map(|o| o.quantity - o.filled).sum()).unwrap_or(0);
+
+        let delta = DepthDelta { side: order_side, price, new_total_qty: remaining_qty };
+
+        Ok((cancelled_order, delta))
     }
 
     pub fn get_depth(&self) -> DepthResponse {

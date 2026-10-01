@@ -5,7 +5,7 @@ use rust_decimal::{Decimal, prelude::FromPrimitive};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::{trade::{Asset, BalanceActions, MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse, publisher::{NullPublisher, RedisPublisher, ResultPublisher}}, types::{Code::{self, InsufficientFunds, 
+use crate::{trade::{Asset, BalanceActions, DepthDelta, MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse, publisher::{NullPublisher, RedisPublisher, ResultPublisher}}, types::{Code::{self, InsufficientFunds, 
     InvalidMarket, InvalidPriceOrQuantity, ServerError}, DepthUpdateMsg, GetBalance, GetBalanceResponse, GetOpenOrderPayload, MessageFromApi, MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, ResponsePayload, ToWs, TradePublishData, TradePublishMsg, WsPublisherActions::{self} }};
 
 #[derive(Debug, Serialize)]
@@ -508,20 +508,25 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                 OrderbookActions::CancelOrder(payload, client_id, origin) => {
                     let res = orderbook.cancel_order(payload.order_id, payload.user_id);
                     match res {
-                        Ok(cancelled_order)  => { // if removed successfully. then update balances
+                        Ok((cancelled_order, depth_delta))  => { // if removed successfully. then update balances
                             let (update_balance_tx, update_balance_rx) = bounded::<SettleResult>(1);
 
                             let _ = balance_trasmitter.clone().send(BalanceActions::CancelAndUpdateBalance(cancelled_order.clone(), payload.symbol, update_balance_tx));
                             if let Ok(val) = update_balance_rx.recv() { // wait till balance thread
                                 if val == SettleResult::Success {
                                     // return cancelled_order with order_id and remaining quantity
-                                    let payload = serde_json::to_string(&MessageToApi::OrderCancelled(OrderCancelledPayload {
+                                    let payload_to_send = serde_json::to_string(&MessageToApi::OrderCancelled(OrderCancelledPayload {
                                         order_id: cancelled_order.order_id,
                                         executed_quantity: cancelled_order.filled,
                                         order_status: OrderStatus::Cancelled,
                                         quantity: cancelled_order.quantity
                                     })).expect("serde error");
-                            market_publisher.complete(client_id, payload, &origin);
+                                    market_publisher.complete(client_id, payload_to_send, &origin);
+
+                                    let _ = ws_publisher.send(WsPublisherActions::DepthUpdate(DepthUpdateMsg { 
+                                        symbol: payload.symbol, 
+                                        depth_deltas: vec![depth_delta]
+                                    }));
                                 }
                             } else {
                                 println!("balance thread recv Error");
