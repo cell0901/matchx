@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{error::{OrderCancelError}, trade::Asset, types::{OrderSide, OrderType}};
+use crate::{error::OrderCancelError, trade::{Asset, SCALE_FACTOR}, types::{OrderSide, OrderType}};
 
 pub type Price= u64;
 pub type CurrentPrice= u64;
@@ -100,11 +100,67 @@ impl Orderbook{
             },
             OrderType::Market => {
                 // IOC. if no order otherside then Cancelled. else partial and full fills.
-                println!("market order hit. implement function for this");
-                return  (4 as u64, OrderStatus::Cancelled, vec![], Uuid::now_v7(), vec![])
+                println!("market order hit");
+                return self.fill_market_order(order)
             }
        };
     }
+
+    fn fill_market_order(&mut self, order: Order) -> (u64, OrderStatus, Vec<Fill>, Uuid, Vec<DepthDelta>) {
+        match order.order_side {
+            OrderSide::Buy => {
+                // simulation already confirmed full liquidity exists — reuse match_bid as-is,
+                // since it already walks and consumes asks the same way
+                let (executed_qty, fills, deltas) = self.match_bid(order.clone());
+                // executed_qty should equal order.quantity by construction (simulated first)
+                (executed_qty, OrderStatus::Filled, fills, order.order_id, deltas)
+            }
+            OrderSide::Sell => {
+                let (executed_qty, fills, deltas) = self.match_ask(order.clone());
+                (executed_qty, OrderStatus::Filled, fills, order.order_id, deltas)
+            }
+        }
+    }
+
+    // first simulate if enough quantity instead directly modifying the orderbook
+      pub fn simulate_market_buy(&self, quantity: u64) -> Option<u64> { // returns total_cost for order
+                                                                    // if enough quantity available
+        let mut remaining = quantity;
+        let mut total_cost: u128 = 0;
+
+        for (&price, level) in self.asks.iter() { // no need to sort as asks are already lowest to highest
+            for order in level.iter() {
+                if remaining == 0 { break; }
+                let available = order.quantity - order.filled;
+                let take = available.min(remaining);
+                total_cost += (price as u128) * (take as u128);
+                remaining -= take;
+            }
+            if remaining == 0 { break; }
+        }
+
+        if remaining > 0 {
+            None // not enough liquidity in the whole book
+        } else {
+            // descale: price and qty are both fixed-point scaled, so their product is double-scaled
+            u64::try_from(total_cost / SCALE_FACTOR as u128).ok()
+        }
+    }
+
+      pub fn has_enough_bid_liquidity(&self, quantity: u64) -> bool{
+          let mut remaining = quantity;
+
+          for level in self.bids.values().rev() {
+              for order in level.iter() {
+                  if remaining == 0 {return true;}
+                  remaining = remaining.saturating_sub(order.quantity - order.filled); // saturating_sub
+                // doenst goes below zero
+              }
+
+          }
+          remaining == 0 // returns true if remaining equals zero
+
+      }
 
     fn fill_limit_order(&mut self, order: Order) -> (u64, OrderStatus, Vec<Fill>, Uuid, Vec<DepthDelta>){
         match order.order_side {

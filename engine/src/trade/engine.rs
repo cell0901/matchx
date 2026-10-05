@@ -5,8 +5,8 @@ use rust_decimal::{Decimal, prelude::FromPrimitive};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::{trade::{Asset, BalanceActions, DepthDelta, MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse, publisher::{NullPublisher, RedisPublisher, ResultPublisher}}, types::{Code::{self, InsufficientFunds, 
-    InvalidMarket, InvalidPriceOrQuantity, ServerError}, DepthUpdateMsg, GetBalance, GetBalanceResponse, GetOpenOrderPayload, MessageFromApi, MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, ResponsePayload, ToWs, TradePublishData, TradePublishMsg, WsPublisherActions::{self} }};
+use crate::{trade::{Asset, BalanceActions,  MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse, publisher::{NullPublisher, RedisPublisher, ResultPublisher}}, types::{Code::{self, InsufficientFunds, 
+    InvalidMarket, InvalidPriceOrQuantity, ServerError}, DepthUpdateMsg, GetBalance, GetBalanceResponse, GetOpenOrderPayload, MessageFromApi, MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, OrderType, ResponsePayload, ToWs, TradePublishData, TradePublishMsg, WsPublisherActions::{self} }};
 
 #[derive(Debug, Serialize)]
 pub struct Balance {
@@ -412,11 +412,36 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
             match val {
                OrderbookActions::CreateOrder(payload, client_id, origin) => {
                     // validate and lock funds
-                    println!("order came {:?}" , payload.order_side);
-                    let res = validate_and_lock(payload.user_id, payload.price, payload.quantity, 
+
+                   let effective_price = match payload.order_type {
+                       OrderType::Limit => payload.price,
+                       OrderType::Market => {
+                           match payload.order_side {
+                               OrderSide::Buy => {
+                                   match orderbook.simulate_market_buy(payload.quantity) {
+                                       Some(total_cost) => {
+                                           // back into an effective "price" by dividing cost by quantity,
+                                           // so validate_and_lock's existing price*quantity math still works
+                                           (total_cost * SCALE_FACTOR) / payload.quantity
+                                       }
+                                       None => {
+                                           // reject — not enough liquidity
+                                           continue;
+                                       }
+                                   }
+                               }
+                               OrderSide::Sell => {
+                                   if !orderbook.has_enough_bid_liquidity(payload.quantity) {
+                                       continue; // reject
+                                   }
+                                   0 // sell lock amount is just quantity of base asset, price is irrelevant to the lock calc
+                               }
+                           }
+                       }
+                   };
+                    let res = validate_and_lock(payload.user_id, effective_price, payload.quantity, 
                         payload.order_side.clone(), payload.symbol, balance_trasmitter.clone());
 
-                    println!("create order arm after validate lock {:?}" , payload.order_side);
 
                     match res {
                         Ok(ValidateAndLockResponse::Success) => { // if success create order and
