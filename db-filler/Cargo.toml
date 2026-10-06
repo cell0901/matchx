@@ -1,0 +1,13 @@
+[package]
+name = "db-filler"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+redis = { version = "1.0.4", features = ["tokio-comp"] }
+sea-orm = { version = "2.0.0", features = ["sqlx-postgres", "runtime-tokio-native-tls", "macros", "with-chrono"] }
+chrono = "0.4"
+dotenvy = "0.15"
+uuid = { version = "1.14", features = ["v7", "serde"] }
+

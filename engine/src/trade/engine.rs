@@ -1,6 +1,6 @@
 use std::{collections::HashMap, num::TryFromIntError, thread};
 use crossbeam_channel::{RecvError, Sender, bounded, unbounded};
-use redis::{aio::MultiplexedConnection};
+use redis::{aio::MultiplexedConnection, Commands};
 use rust_decimal::{Decimal, prelude::FromPrimitive};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -12,6 +12,33 @@ use crate::{trade::{Asset, BalanceActions,  MARKETS, Market, Order, OrderStatus,
 pub struct Balance {
     pub available: u64,
     pub locked: u64
+}
+//for db publisher
+pub struct TradeEventData {
+    trade_id: u64,
+    market: String,
+    price: u64,
+    quantity: u64,
+    buyer_user_id: Uuid,
+    seller_user_id: Uuid,
+    taker_side: String,
+}
+
+pub struct OrderEventData {
+    order_id: Uuid,
+    user_id: Uuid,
+    market: String,
+    side: String,
+    order_type: String,
+    price: u64,
+    quantity: u64,
+    filled_quantity: u64,
+    status: String,
+}
+
+pub enum DbFillerActions {
+    PublishTrade(TradeEventData),
+    PublishOrderStatus(OrderEventData),
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub enum Origin {
@@ -54,6 +81,7 @@ impl Engine {
 
         let balance_sender = spawn_balance_thread(balance_publisher);
         let ws_publisher_sender  = spawn_ws_publisher(ws_publisher);
+        let db_filler_sender = spawn_db_filler_publisher(redis_client.clone());
 
         let mut market_senders = HashMap::new();
         for market in MARKETS {
@@ -62,7 +90,7 @@ impl Engine {
             } else {
                 Box::new(RedisPublisher::new(redis_client.clone()))
             };
-            let market_tx = spawn_market_thread(market, market_publisher, balance_sender.clone(), ws_publisher_sender.clone());
+            let market_tx = spawn_market_thread(market, market_publisher, balance_sender.clone(), ws_publisher_sender.clone(), db_filler_sender.clone());
             market_senders.insert(market, market_tx);
         };
 
@@ -394,7 +422,7 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
     tx
 }
 
-fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublisher>,  balance_trasmitter: Sender<BalanceActions>, ws_publisher:Sender<WsPublisherActions>) -> Sender<OrderbookActions>{
+fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublisher>,  balance_trasmitter: Sender<BalanceActions>, ws_publisher:Sender<WsPublisherActions>, db_filler_publisher: Sender<DbFillerActions>) -> Sender<OrderbookActions>{
     let (market_tx, market_rx) = unbounded::<OrderbookActions>(); // normal mpsc channel but with no limit. since we
     // will handle many messages. although if orderbook matching gets slowed but the incoming
     // orders keeps flowing then this will increase indefenitely. fine for this
@@ -454,7 +482,7 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                 user_id: payload.user_id,
                                 quantity: payload.quantity,
                                 order_side: payload.order_side.clone(),
-                                order_type: payload.order_type,
+                                order_type: payload.order_type.clone(),
                                 filled: 0
                             };
                             let (executed_qty, order_status, fills, order_id, depth_deltas) = orderbook.add_order(order); // get the fills and change balances
@@ -472,6 +500,7 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                 if val == SettleResult::Success {
                                     // return order success created with executed_qty and
                                     // order_status
+                                    let order_status_name = order_status_name(&order_status).to_string();
                                     let res_payload = serde_json::to_string(&MessageToApi::OrderPlaced(OrderPlacedPayload {
                                         order_id: order_id,
                                         executed_quantity: executed_qty,
@@ -499,6 +528,52 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                             trades: trade_payloads 
                                         }));
                                     }
+
+                                    for fill in &fills {
+                                        let (buyer_user_id, seller_user_id) = match payload.order_side {
+                                            OrderSide::Buy => (fill.user_id, fill.other_user_id),
+                                            OrderSide::Sell => (fill.other_user_id, fill.user_id),
+                                        };
+
+                                        let _ = db_filler_publisher.send(DbFillerActions::PublishTrade(TradeEventData {
+                                            trade_id: fill.trade_id,
+                                            market: market_name(payload.symbol),
+                                            price: fill.price,
+                                            quantity: fill.quantity,
+                                            buyer_user_id,
+                                            seller_user_id,
+                                            taker_side: order_side_name(&payload.order_side).to_string(),
+                                        }));
+
+                                        let maker_status = if fill.maker_filled_quantity == fill.maker_order_quantity {
+                                            "Filled"
+                                        } else {
+                                            "PartiallyFilled"
+                                        };
+                                        let _ = db_filler_publisher.send(DbFillerActions::PublishOrderStatus(OrderEventData {
+                                            order_id: fill.maker_order_id,
+                                            user_id: fill.other_user_id,
+                                            market: market_name(payload.symbol),
+                                            side: order_side_name(&fill.maker_order_side).to_string(),
+                                            order_type: order_type_name(&fill.maker_order_type).to_string(),
+                                            price: fill.price,
+                                            quantity: fill.maker_order_quantity,
+                                            filled_quantity: fill.maker_filled_quantity,
+                                            status: maker_status.to_string(),
+                                        }));
+                                    }
+
+                                    let _ = db_filler_publisher.send(DbFillerActions::PublishOrderStatus(OrderEventData {
+                                        order_id,
+                                        user_id: payload.user_id,
+                                        market: market_name(payload.symbol),
+                                        side: order_side_name(&payload.order_side).to_string(),
+                                        order_type: order_type_name(&payload.order_type).to_string(),
+                                        price: payload.price,
+                                        quantity: payload.quantity,
+                                        filled_quantity: executed_qty,
+                                        status: order_status_name,
+                                    }));
 
                                     let _ = ws_publisher.send(WsPublisherActions::DepthUpdate(DepthUpdateMsg {
                                         symbol: payload.symbol,
@@ -551,6 +626,18 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                     let _ = ws_publisher.send(WsPublisherActions::DepthUpdate(DepthUpdateMsg { 
                                         symbol: payload.symbol, 
                                         depth_deltas: vec![depth_delta]
+                                    }));
+
+                                    let _ = db_filler_publisher.send(DbFillerActions::PublishOrderStatus(OrderEventData {
+                                        order_id: cancelled_order.order_id,
+                                        user_id: cancelled_order.user_id,
+                                        market: market_name(payload.symbol),
+                                        side: order_side_name(&cancelled_order.order_side).to_string(),
+                                        order_type: order_type_name(&cancelled_order.order_type).to_string(),
+                                        price: cancelled_order.price,
+                                        quantity: cancelled_order.quantity,
+                                        filled_quantity: cancelled_order.filled,
+                                        status: "Cancelled".to_string(),
                                     }));
                                 }
                             } else {
@@ -658,4 +745,77 @@ fn spawn_ws_publisher(mut ws_publisher: Box<dyn ResultPublisher>) -> Sender<WsPu
     });
 
     tx
+}
+
+fn spawn_db_filler_publisher(redis_client: redis::Client) -> Sender<DbFillerActions> {
+    let (tx, rx) = unbounded::<DbFillerActions>();
+
+    thread::spawn(move || {
+        let mut conn = redis_client.get_connection().expect("failed to get redis connection");
+        while let Ok(val) = rx.recv() {
+            match val {
+                DbFillerActions::PublishTrade(data) => {
+                    let result: Result<String, _> = conn.xadd("engine_events_stream", "*", &[
+                        ("event_type", "trade_executed"),
+                        ("trade_id", &data.trade_id.to_string()),
+                        ("market", &data.market),
+                        ("price", &data.price.to_string()),
+                        ("quantity", &data.quantity.to_string()),
+                        ("buyer_user_id", &data.buyer_user_id.to_string()),
+                        ("seller_user_id", &data.seller_user_id.to_string()),
+                        ("taker_side", &data.taker_side),
+                    ]);
+                    if let Err(err) = result {
+                        eprintln!("failed to publish trade event: {err}");
+                    }
+                },
+                DbFillerActions::PublishOrderStatus(data) => {
+                    let result: Result<String, _> = conn.xadd("engine_events_stream", "*", &[
+                        ("event_type", "order_status_changed"),
+                        ("order_id", &data.order_id.to_string()),
+                        ("user_id", &data.user_id.to_string()),
+                        ("market", &data.market),
+                        ("side", &data.side),
+                        ("order_type", &data.order_type),
+                        ("price", &data.price.to_string()),
+                        ("quantity", &data.quantity.to_string()),
+                        ("filled_quantity", &data.filled_quantity.to_string()),
+                        ("status", &data.status),
+                    ]);
+                    if let Err(err) = result {
+                        eprintln!("failed to publish order-status event: {err}");
+                    }
+                }
+            }
+        }
+    });
+
+    tx
+}
+
+fn market_name(market: Market) -> String {
+    format!("{}_{}", market.base.as_str(), market.quote.as_str())
+}
+
+fn order_side_name(side: &OrderSide) -> &'static str {
+    match side {
+        OrderSide::Buy => "Buy",
+        OrderSide::Sell => "Sell",
+    }
+}
+
+fn order_type_name(order_type: &OrderType) -> &'static str {
+    match order_type {
+        OrderType::Limit => "Limit",
+        OrderType::Market => "Market",
+    }
+}
+
+fn order_status_name(status: &OrderStatus) -> &'static str {
+    match status {
+        OrderStatus::New => "New",
+        OrderStatus::PartiallyFilled => "PartiallyFilled",
+        OrderStatus::Filled => "Filled",
+        OrderStatus::Cancelled => "Cancelled",
+    }
 }

@@ -16,6 +16,11 @@ pub struct Fill{
     pub user_id: Uuid,
     pub other_user_id: Uuid,
     pub trade_id: u64,
+    pub maker_order_id: Uuid,
+    pub maker_order_side: OrderSide,
+    pub maker_order_type: OrderType,
+    pub maker_order_quantity: u64,
+    pub maker_filled_quantity: u64,
 }
 
 #[derive(Clone, PartialEq, Eq, Copy, Hash, Deserialize, Serialize, Debug)]
@@ -285,7 +290,12 @@ impl Orderbook{
                     quantity: trade_qty,
                     user_id: order.user_id,
                     other_user_id: resting_ask.user_id,
-                    trade_id: self.last_trade_id
+                    trade_id: self.last_trade_id,
+                    maker_order_id: resting_ask.order_id,
+                    maker_order_side: resting_ask.order_side.clone(),
+                    maker_order_type: resting_ask.order_type.clone(),
+                    maker_order_quantity: resting_ask.quantity,
+                    maker_filled_quantity: resting_ask.filled + trade_qty,
                 });
                 
                 
@@ -356,7 +366,12 @@ impl Orderbook{
                     quantity: trade_qty,
                     user_id: order.user_id,
                     other_user_id: resting_bid.user_id,
-                    trade_id: self.last_trade_id
+                    trade_id: self.last_trade_id,
+                    maker_order_id: resting_bid.order_id,
+                    maker_order_side: resting_bid.order_side.clone(),
+                    maker_order_type: resting_bid.order_type.clone(),
+                    maker_order_quantity: resting_bid.quantity,
+                    maker_filled_quantity: resting_bid.filled + trade_qty,
                 });
 
                 
