@@ -7,7 +7,7 @@ pub struct OrderSchema { // from client
     pub symbol: String,
     pub order_type: OrderType,
     pub order_side: OrderSide,
-    pub price: String, // it should be an option if the order type is market. but currenly we will
+    pub price: Option<String>, // it should be an option if the order type is market. but currenly we will
     // default
     pub quantity: String,
 }

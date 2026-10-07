@@ -37,7 +37,7 @@ pub struct CreateOrderPayload{
     pub symbol: Market, // SOL_USD, ETH_USD, BTC_USD
     pub order_type: OrderType, // market/ limit
     pub order_side: OrderSide, // buy or sell
-    pub price: u64,
+    pub price: Option<u64>,
     pub quantity: u64,
     pub user_id: Uuid, // authorized userId
     pub order_id: Uuid // random generated order id in the route
@@ -75,4 +75,3 @@ pub struct GetBalancePayload{
     pub asset: Asset,
     pub user_id: Uuid 
 }
-

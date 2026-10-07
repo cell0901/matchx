@@ -2,20 +2,24 @@ use actix_web::{HttpResponse, Responder, delete, get, post, web::{self, Json}};
 use uuid::Uuid;
 use rust_decimal::prelude::*;
 
-use crate::{SCALE_FACTOR, redis::redis_manager::RedisManager, routes::Market, types::{CancelOrderSchema, OpenOrderSchema, OrderSchema, message_to_engine::{CancelOrderPayload, CreateOrderPayload, MessageToEngine, OpenOrderPayload}}};
+use crate::{SCALE_FACTOR, redis::redis_manager::RedisManager, routes::Market, types::{CancelOrderSchema, OpenOrderSchema, OrderSchema, message_to_engine::{CancelOrderPayload, CreateOrderPayload, MessageToEngine, OpenOrderPayload, OrderType}}};
 
 #[post("/order")]
 async fn order(user_id: web::ReqData<Uuid>, body:Json<OrderSchema>, data:web::Data<RedisManager> ) -> impl Responder{
     let order_id = Uuid::now_v7(); 
 
-    let parsed_price = match string_to_64(body.price.as_str()) {
-        Ok(price) => {
-            price
+    let parsed_price = match body.order_type {
+        OrderType::Limit => match body.price.as_deref() {
+            Some(price) => match string_to_64(price) {
+                Ok(price) => Some(price),
+                Err(err) => {
+                    println!("error occured while price parsing {}", err);
+                    return HttpResponse::BadRequest().json("price format not supported")
+                }
+            },
+            None => return HttpResponse::BadRequest().json("price is required for limit orders"),
         },
-        Err(err) => {
-            println!("error occured while price parsing {}", err);
-            return HttpResponse::BadRequest().json("price format not supported")
-        }
+        OrderType::Market => None,
     };
     let parsed_quantity = match string_to_64(body.quantity.as_str()) {
         Ok(qty) => {

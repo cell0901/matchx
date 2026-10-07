@@ -442,7 +442,17 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                     // validate and lock funds
 
                    let effective_price = match payload.order_type {
-                       OrderType::Limit => payload.price,
+                       OrderType::Limit => match payload.price {
+                           Some(price) => price,
+                           None => {
+                               let rejection = serde_json::to_string(&MessageToApi::OrderRejected(ResponsePayload {
+                                   code: InvalidPriceOrQuantity,
+                                   message: "price is required for limit orders".to_string(),
+                               })).expect("serde error");
+                               market_publisher.complete(client_id, rejection, &origin);
+                               continue;
+                           }
+                       },
                        OrderType::Market => {
                            match payload.order_side {
                                OrderSide::Buy => {
@@ -478,7 +488,7 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                             let (balance_settle_tx,balance_settle_rx) = bounded::<SettleResult>(1);
                             let order = Order {
                                 order_id: payload.order_id,
-                                price: payload.price,
+                                price: payload.price.unwrap_or(0),
                                 user_id: payload.user_id,
                                 quantity: payload.quantity,
                                 order_side: payload.order_side.clone(),
@@ -569,7 +579,7 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                         market: market_name(payload.symbol),
                                         side: order_side_name(&payload.order_side).to_string(),
                                         order_type: order_type_name(&payload.order_type).to_string(),
-                                        price: payload.price,
+                                        price: payload.price.unwrap_or(0),
                                         quantity: payload.quantity,
                                         filled_quantity: executed_qty,
                                         status: order_status_name,
