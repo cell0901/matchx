@@ -4,6 +4,9 @@ A Rust exchange with separate HTTP, matching-engine, WebSocket, and database-wri
 
 The engine keeps matching and balance updates in memory, Redis carries commands and events between services, and Postgres stores executed trades and order state.
 
+## Architecture
+![architecture](./assets/architecture_rs.png)
+
 ## Services
 
 | Service | Purpose |
