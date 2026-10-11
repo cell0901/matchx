@@ -69,7 +69,7 @@ Market orders may omit `price`; limit orders require it.
 
 Protected endpoints require the authentication middleware configured by the HTTP service.
 
-## TODO
+### Remaining:
 
 - Add engine-only benchmarks for order matching, settlement, and depth updates.
-- Add end-to-end benchmarks covering HTTP, Redis, engine, and WebSocket publication.
+- End-to-end benchmarks covering HTTP, Redis, and engine.
