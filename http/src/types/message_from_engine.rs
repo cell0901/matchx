@@ -22,20 +22,20 @@ pub struct Fill{
 #[derive(Deserialize, Serialize )]
 pub struct Order{
     pub order_id: Uuid,
-    pub price: u64,
+    pub price: String,
     pub user_id: Uuid,
-    pub quantity: u64,
+    pub quantity: String,
     pub order_side: OrderSide,
     pub order_type: OrderType, // mostly the order type will limit. order but we still added the
     // market. just in case
-    pub filled: u64 // how much quantity filled
+    pub filled: String // how much quantity filled
 }
 
 
 #[derive(Serialize, Deserialize)]
 pub struct OrderPlacedPayload{
     pub order_id: Uuid,
-    pub executed_quantity: u64,
+    pub executed_quantity: String,
     // pub fills: Vec<Fill>,
     pub order_status: OrderStatus
 }
@@ -43,9 +43,9 @@ pub struct OrderPlacedPayload{
 #[derive(Serialize, Deserialize)]
 pub struct OrderCancelledPayload{
     pub order_id: Uuid,
-    pub executed_quantity: u64,
+    pub executed_quantity: String,
     pub order_status: OrderStatus,
-    pub quantity: u64
+    pub quantity: String
 }
 
 #[derive(Serialize, Deserialize)]

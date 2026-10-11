@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::{trade::{Asset, BalanceActions,  MARKETS, Market, Order, OrderStatus, Orderbook, OrderbookActions, SCALE_FACTOR, SettleFillsData, SettleResult::{self}, ValidateAndLockData, ValidateAndLockResponse, publisher::{NullPublisher, RedisPublisher, ResultPublisher}}, types::{Code::{self, InsufficientFunds, 
-    InvalidMarket, InvalidPriceOrQuantity, ServerError}, DepthUpdateMsg, GetBalance, GetBalanceResponse, GetOpenOrderPayload, MessageFromApi, MessageToApi, OrderCancelledPayload, OrderPlacedPayload, OrderSide, OrderType, ResponsePayload, ToWs, TradePublishData, TradePublishMsg, WsPublisherActions::{self} }};
+    InvalidMarket, InvalidPriceOrQuantity, ServerError}, DepthUpdateMsg, GetBalance, GetBalanceResponse, GetOpenOrderPayload, MessageFromApi, MessageToApi, OpenOrder, OrderCancelledPayload, OrderPlacedPayload, OrderSide, OrderType, ResponsePayload, ToWs, TradePublishData, TradePublishMsg, WsPublisherActions::{self} }};
 
 #[derive(Debug, Serialize)]
 pub struct Balance {
@@ -42,7 +42,7 @@ pub enum DbFillerActions {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub enum Origin {
-    Stream{entry_id: String}, // for xack
+    Stream {entry_id: String}, // for xack
     List // nothing to ack
 }
 
@@ -167,7 +167,7 @@ impl Engine {
 
                 };
             },
-            MessageFromApi::GetDepth(market, origin) => {
+            MessageFromApi::GetDepth(market) => {
                 let orderbook = self.market_senders.get(&market);
 
                 match orderbook {
@@ -365,9 +365,10 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
                  balances.entry((user_id, Asset::USDC)).or_insert(Balance::default()).available += amount; 
                     println!("balance after /onramp order {:?}", balances);
                     // send back to pub sub successfull
+
                     let payload = serde_json::to_string(&MessageToApi::OnrampResponse(ResponsePayload{
                         code: Code::OnrampSuccess,
-                        message: format!("onramp successfull amount {}", amount)
+                        message: format!("onramp successfull amount {}", u64_to_string(amount).expect("amount conversion failed"))
                     })).expect("serde error");
 
                     balance_publisher.complete(client_id, payload, &origin);
@@ -378,7 +379,7 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
                     println!("balance after /deposit order {:?}", balances);
                 let payload = serde_json::to_string(&MessageToApi::DepositResponse(ResponsePayload{
                         code: Code::DepositSuccess,
-                        message: format!("Deposit successfull amount {}", qty)
+                        message: format!("Deposit successfull amount {}", u64_to_string(qty).expect("quantity conversion failed"))
                     })).expect("serde error");
                     balance_publisher.complete(client_id, payload, &origin);
                 },
@@ -513,7 +514,7 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                     let order_status_name = order_status_name(&order_status).to_string();
                                     let res_payload = serde_json::to_string(&MessageToApi::OrderPlaced(OrderPlacedPayload {
                                         order_id: order_id,
-                                        executed_quantity: executed_qty,
+                                        executed_quantity: u64_to_string(executed_qty).expect("quantity conversion failed"),
                                         order_status
                                     })).expect("serde error");
 
@@ -627,9 +628,9 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                     // return cancelled_order with order_id and remaining quantity
                                     let payload_to_send = serde_json::to_string(&MessageToApi::OrderCancelled(OrderCancelledPayload {
                                         order_id: cancelled_order.order_id,
-                                        executed_quantity: cancelled_order.filled,
+                                        executed_quantity: u64_to_string(cancelled_order.filled).expect("quantity conversion failed"),
                                         order_status: OrderStatus::Cancelled,
-                                        quantity: cancelled_order.quantity
+                                        quantity: u64_to_string(cancelled_order.quantity).expect("quantity conversion failed")
                                     })).expect("serde error");
                                     market_publisher.complete(client_id, payload_to_send, &origin);
 
@@ -674,7 +675,15 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                             market_publisher.complete(client_id, payload, &origin);
                 },
                 OrderbookActions::GetOpenOrders(payload, client_id, origin) => {
-                    let open_orders = orderbook.get_open_orders(payload.user_id);
+                    let open_orders = orderbook.get_open_orders(payload.user_id).into_iter().map(|order| OpenOrder {
+                        order_id: order.order_id,
+                        price: u64_to_string(order.price).expect("price conversion failed"),
+                        user_id: order.user_id,
+                        quantity: u64_to_string(order.quantity).expect("quantity conversion failed"),
+                        order_side: order.order_side,
+                        order_type: order.order_type,
+                        filled: u64_to_string(order.filled).expect("quantity conversion failed"),
+                    }).collect();
                     // publish
                     let payload = serde_json::to_string(&MessageToApi::GetOpenOrders(GetOpenOrderPayload {
                         orders :open_orders

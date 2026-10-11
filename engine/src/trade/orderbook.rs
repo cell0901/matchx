@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{error::OrderCancelError, trade::{Asset, SCALE_FACTOR}, types::{OrderSide, OrderType}};
+use crate::{error::OrderCancelError, trade::{u64_to_string, Asset, SCALE_FACTOR}, types::{OrderSide, OrderType}};
 
 pub type Price= u64;
 pub type CurrentPrice= u64;
@@ -465,16 +465,16 @@ impl Orderbook{
             // calculate total qty of orders
             let total_qty: u64 = orders.iter().map(|o| o.quantity - o.filled).sum();
             DepthLevel { // on each iter returns this 
-                price: price.to_string(),
-                quantity: total_qty.to_string()
+                price: u64_to_string(*price).expect("price conversion failed"),
+                quantity: u64_to_string(total_qty).expect("quantity conversion failed")
             }
         }).collect(); 
 
         let asks: Vec<DepthLevel> = self.asks.iter().map(|(price,orders)| {
             let total_qty: u64 = orders.iter().map(|o| o.quantity - o.filled).sum();
             DepthLevel {
-                price: price.to_string(),
-                quantity: total_qty.to_string()
+                price: u64_to_string(*price).expect("price conversion failed"),
+                quantity: u64_to_string(total_qty).expect("quantity conversion failed")
             }
         }).collect();
 

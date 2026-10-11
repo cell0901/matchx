@@ -2,7 +2,7 @@ use std::env;
 
 use rust_cex::redis::redis_manager::RedisManager;
 use rust_cex::routes::order::order;
-use rust_cex::routes::{auth_middleware, cancel_order, deposit, get_balance, get_orders, onramp, signin, signup};
+use rust_cex::routes::{auth_middleware, cancel_order, deposit, get_balance, get_depth, get_orders, onramp, signin, signup};
 use sea_orm::{ Database };
 use actix_web::middleware::{ from_fn};
 use actix_web::{App,  HttpServer,  web::{ self}};
@@ -43,6 +43,7 @@ async fn main() -> std::io::Result<()> {
             .service(order)
             .service(cancel_order)
             .service(get_orders)
+            .service(get_depth)
         )
     })
     .bind(("127.0.0.1", 8080))?

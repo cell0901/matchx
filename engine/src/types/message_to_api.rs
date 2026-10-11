@@ -1,20 +1,23 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::trade::{Asset,DepthResponse, Order, OrderStatus};
+use crate::{
+    trade::{Asset, DepthResponse, OrderStatus},
+    types::{OrderSide, OrderType},
+};
 
 #[derive(Serialize, Deserialize)]
 pub struct OrderCancelledPayload{
     pub order_id: Uuid,
-    pub executed_quantity: u64,
+    pub executed_quantity: String,
     pub order_status: OrderStatus,
-    pub quantity: u64
+    pub quantity: String
 }
 
 #[derive(Serialize)]
 pub struct OrderPlacedPayload {
     pub order_id: Uuid,
-    pub executed_quantity: u64,
+    pub executed_quantity: String,
     pub order_status: OrderStatus
 }
 
@@ -24,8 +27,19 @@ pub struct ResponsePayload {
     pub message: String
 }
 #[derive(Serialize)]
+pub struct OpenOrder {
+    pub order_id: Uuid,
+    pub price: String,
+    pub user_id: Uuid,
+    pub quantity: String,
+    pub order_side: OrderSide,
+    pub order_type: OrderType,
+    pub filled: String,
+}
+
+#[derive(Serialize)]
 pub struct GetOpenOrderPayload {
-    pub orders: Vec<Order>
+    pub orders: Vec<OpenOrder>
 }
 
 #[derive(Serialize)]
