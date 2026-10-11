@@ -9,12 +9,13 @@ The engine keeps matching and balance updates in memory, Redis carries commands 
 
 ## Services
 
-| Service | Purpose |
-| --- | --- |
-| `http` | REST API, authentication, request validation, and Redis request/reply bridge. Runs on `localhost:8080`. |
-| `engine` | Multi-threaded, per-market orderbook matching, balance handling, Redis command consumers, and event publishing. |
-| `ws` | WebSocket gateway for trade and depth updates. Runs on `localhost:8081`. |
-| `db-filler` | Redis Streams consumer that persists trade and order events to Postgres. |
+`http:` is the REST API. It handles authentication, validates requests, and bridges request/reply messages through Redis. It runs on `localhost:8080`.
+
+`engine:` is the multi-threaded matching service. Each market owns a dedicated orderbook thread; the service also handles balances, Redis command consumption, and event publishing.
+
+`ws:` is the WebSocket gateway for trade and depth updates. It runs on `localhost:8081`.
+
+`db-filler:` consumes Redis Stream events and persists trades and order state to Postgres.
 
 ## Local setup
 
