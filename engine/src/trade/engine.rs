@@ -81,7 +81,11 @@ impl Engine {
 
         let balance_sender = spawn_balance_thread(balance_publisher);
         let ws_publisher_sender  = spawn_ws_publisher(ws_publisher);
-        let db_filler_sender = spawn_db_filler_publisher(redis_client.clone());
+        let db_filler_sender = if is_benchmark {
+            None
+        } else {
+            Some(spawn_db_filler_publisher(redis_client.clone()))
+        };
 
         let mut market_senders = HashMap::new();
         for market in MARKETS {
@@ -423,7 +427,7 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
     tx
 }
 
-fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublisher>,  balance_trasmitter: Sender<BalanceActions>, ws_publisher:Sender<WsPublisherActions>, db_filler_publisher: Sender<DbFillerActions>) -> Sender<OrderbookActions>{
+fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublisher>,  balance_trasmitter: Sender<BalanceActions>, ws_publisher:Sender<WsPublisherActions>, db_filler_publisher: Option<Sender<DbFillerActions>>) -> Sender<OrderbookActions>{
     let (market_tx, market_rx) = unbounded::<OrderbookActions>(); // normal mpsc channel but with no limit. since we
     // will handle many messages. although if orderbook matching gets slowed but the incoming
     // orders keeps flowing then this will increase indefenitely. fine for this
@@ -546,45 +550,51 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                             OrderSide::Sell => (fill.other_user_id, fill.user_id),
                                         };
 
-                                        let _ = db_filler_publisher.send(DbFillerActions::PublishTrade(TradeEventData {
-                                            trade_id: fill.trade_id,
-                                            market: market_name(payload.symbol),
-                                            price: fill.price,
-                                            quantity: fill.quantity,
-                                            buyer_user_id,
-                                            seller_user_id,
-                                            taker_side: order_side_name(&payload.order_side).to_string(),
-                                        }));
+                                        if let Some(publisher) = &db_filler_publisher {
+                                            let _ = publisher.send(DbFillerActions::PublishTrade(TradeEventData {
+                                                trade_id: fill.trade_id,
+                                                market: market_name(payload.symbol),
+                                                price: fill.price,
+                                                quantity: fill.quantity,
+                                                buyer_user_id,
+                                                seller_user_id,
+                                                taker_side: order_side_name(&payload.order_side).to_string(),
+                                            }));
+                                        }
 
                                         let maker_status = if fill.maker_filled_quantity == fill.maker_order_quantity {
                                             "Filled"
                                         } else {
                                             "PartiallyFilled"
                                         };
-                                        let _ = db_filler_publisher.send(DbFillerActions::PublishOrderStatus(OrderEventData {
-                                            order_id: fill.maker_order_id,
-                                            user_id: fill.other_user_id,
-                                            market: market_name(payload.symbol),
-                                            side: order_side_name(&fill.maker_order_side).to_string(),
-                                            order_type: order_type_name(&fill.maker_order_type).to_string(),
-                                            price: fill.price,
-                                            quantity: fill.maker_order_quantity,
-                                            filled_quantity: fill.maker_filled_quantity,
-                                            status: maker_status.to_string(),
-                                        }));
+                                        if let Some(publisher) = &db_filler_publisher {
+                                            let _ = publisher.send(DbFillerActions::PublishOrderStatus(OrderEventData {
+                                                order_id: fill.maker_order_id,
+                                                user_id: fill.other_user_id,
+                                                market: market_name(payload.symbol),
+                                                side: order_side_name(&fill.maker_order_side).to_string(),
+                                                order_type: order_type_name(&fill.maker_order_type).to_string(),
+                                                price: fill.price,
+                                                quantity: fill.maker_order_quantity,
+                                                filled_quantity: fill.maker_filled_quantity,
+                                                status: maker_status.to_string(),
+                                            }));
+                                        }
                                     }
 
-                                    let _ = db_filler_publisher.send(DbFillerActions::PublishOrderStatus(OrderEventData {
-                                        order_id,
-                                        user_id: payload.user_id,
-                                        market: market_name(payload.symbol),
-                                        side: order_side_name(&payload.order_side).to_string(),
-                                        order_type: order_type_name(&payload.order_type).to_string(),
-                                        price: payload.price.unwrap_or(0),
-                                        quantity: payload.quantity,
-                                        filled_quantity: executed_qty,
-                                        status: order_status_name,
-                                    }));
+                                    if let Some(publisher) = &db_filler_publisher {
+                                        let _ = publisher.send(DbFillerActions::PublishOrderStatus(OrderEventData {
+                                            order_id,
+                                            user_id: payload.user_id,
+                                            market: market_name(payload.symbol),
+                                            side: order_side_name(&payload.order_side).to_string(),
+                                            order_type: order_type_name(&payload.order_type).to_string(),
+                                            price: payload.price.unwrap_or(0),
+                                            quantity: payload.quantity,
+                                            filled_quantity: executed_qty,
+                                            status: order_status_name,
+                                        }));
+                                    }
 
                                     let _ = ws_publisher.send(WsPublisherActions::DepthUpdate(DepthUpdateMsg {
                                         symbol: payload.symbol,
@@ -639,17 +649,19 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                         depth_deltas: vec![depth_delta]
                                     }));
 
-                                    let _ = db_filler_publisher.send(DbFillerActions::PublishOrderStatus(OrderEventData {
-                                        order_id: cancelled_order.order_id,
-                                        user_id: cancelled_order.user_id,
-                                        market: market_name(payload.symbol),
-                                        side: order_side_name(&cancelled_order.order_side).to_string(),
-                                        order_type: order_type_name(&cancelled_order.order_type).to_string(),
-                                        price: cancelled_order.price,
-                                        quantity: cancelled_order.quantity,
-                                        filled_quantity: cancelled_order.filled,
-                                        status: "Cancelled".to_string(),
-                                    }));
+                                    if let Some(publisher) = &db_filler_publisher {
+                                        let _ = publisher.send(DbFillerActions::PublishOrderStatus(OrderEventData {
+                                            order_id: cancelled_order.order_id,
+                                            user_id: cancelled_order.user_id,
+                                            market: market_name(payload.symbol),
+                                            side: order_side_name(&cancelled_order.order_side).to_string(),
+                                            order_type: order_type_name(&cancelled_order.order_type).to_string(),
+                                            price: cancelled_order.price,
+                                            quantity: cancelled_order.quantity,
+                                            filled_quantity: cancelled_order.filled,
+                                            status: "Cancelled".to_string(),
+                                        }));
+                                    }
                                 }
                             } else {
                                 println!("balance thread recv Error");
