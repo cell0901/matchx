@@ -73,14 +73,12 @@ impl Engine {
             Box::new(RedisPublisher::new(redis_client.clone()))
         };
 
-        let ws_publisher: Box<dyn ResultPublisher> = if is_benchmark {
-            Box::new(NullPublisher)
-        } else {
-            Box::new(RedisPublisher::new(redis_client.clone()))
-        };
-
         let balance_sender = spawn_balance_thread(balance_publisher);
-        let ws_publisher_sender  = spawn_ws_publisher(ws_publisher);
+        let ws_publisher_sender = if is_benchmark {
+            None
+        } else {
+            Some(spawn_ws_publisher(Box::new(RedisPublisher::new(redis_client.clone()))))
+        };
         let db_filler_sender = if is_benchmark {
             None
         } else {
@@ -278,7 +276,7 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
                             }
                         };
                     }
-                    println!("balance after /create order {:?}", balances);
+                    // println!("balance after /create order {:?}", balances);
                 },
                 BalanceActions::SettleFills(data) => {
                     if data.side == OrderSide::Buy {
@@ -315,22 +313,18 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
                             };
                             // decrease seller locked base asset  (taker)
                             if let Some(bal) = balances.get_mut(&(fill.user_id, data.base_asset)) {
-                                println!("decreseing seller locked base asset by {}", fill.quantity);
                                 bal.locked -= fill.quantity;
                             }
 
                             // increase seller quote asset avlbl amount
-                            println!("sell /order increasing seller quote amount {}", notional.unwrap());
                             balances.entry((fill.user_id, data.quote_asset)).or_insert(Balance::default()).available += notional.unwrap();
 
                             // decrease maker locked quote asset amount
                             if let Some(bal) = balances.get_mut(&(fill.other_user_id, data.quote_asset)) {
-                                println!("decreasing maker (bid) locked quote asset {}", notional.unwrap());
                                 bal.locked -= notional.unwrap();
                             }
 
                             // increase maker base asset avlbl amount
-                            println!("increaesing maker base asset avlbl {}", fill.quantity);
                             balances.entry((fill.other_user_id, data.base_asset)).or_insert(Balance::default()).available += fill.quantity;
                         }
                     }
@@ -355,11 +349,9 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
                         };
                     } else { // if sell was cancelled increase base_asset avlbl amount
                         if let Some(bal) = balances.get_mut(&(order.user_id, symbol.base)) {
-                            println!("bal in just starting {:?}", bal );
-                            println!("order quantity: {} and orer filled quantity: {}", order.quantity, order.filled);
+                            // println!("bal in just starting {:?}", bal );
                             bal.available += order.quantity - order.filled;
-                            println!("bal before changing locked{:?}", bal);
-                            println!("quantity to be removed{:?}", order.quantity - order.filled);
+                            // println!("bal before changing locked{:?}", bal);
                             bal.locked -= order.quantity - order.filled;
                             let _ = resp.send(SettleResult::Success);
                         }
@@ -367,7 +359,6 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
                 },
                 BalanceActions::Onramp(amount, user_id, client_id, origin) => {
                  balances.entry((user_id, Asset::USDC)).or_insert(Balance::default()).available += amount; 
-                    println!("balance after /onramp order {:?}", balances);
                     // send back to pub sub successfull
 
                     let payload = serde_json::to_string(&MessageToApi::OnrampResponse(ResponsePayload{
@@ -380,7 +371,7 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
                 BalanceActions::Deposit(asset, qty, user_id, client_id, origin) => {
                  balances.entry((user_id, asset)).or_insert(Balance::default()).available += qty; 
                  // send back to pub sub successfull
-                    println!("balance after /deposit order {:?}", balances);
+                    // println!("balance after /deposit order {:?}", balances);
                 let payload = serde_json::to_string(&MessageToApi::DepositResponse(ResponsePayload{
                         code: Code::DepositSuccess,
                         message: format!("Deposit successfull amount {}", u64_to_string(qty).expect("quantity conversion failed"))
@@ -409,7 +400,6 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
                         }, 
                         None => {
                             // send back amount 0
-                            println!("None arm ran");
                             let payload = serde_json::to_string(&MessageToApi::GetBalance(GetBalanceResponse{
                                 asset,
                                 balance:GetBalance {
@@ -427,7 +417,7 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
     tx
 }
 
-fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublisher>,  balance_trasmitter: Sender<BalanceActions>, ws_publisher:Sender<WsPublisherActions>, db_filler_publisher: Option<Sender<DbFillerActions>>) -> Sender<OrderbookActions>{
+fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublisher>,  balance_trasmitter: Sender<BalanceActions>, ws_publisher: Option<Sender<WsPublisherActions>>, db_filler_publisher: Option<Sender<DbFillerActions>>) -> Sender<OrderbookActions>{
     let (market_tx, market_rx) = unbounded::<OrderbookActions>(); // normal mpsc channel but with no limit. since we
     // will handle many messages. although if orderbook matching gets slowed but the incoming
     // orders keeps flowing then this will increase indefenitely. fine for this
@@ -488,7 +478,7 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
 
                     match res {
                         Ok(ValidateAndLockResponse::Success) => { // if success create order and
-                            println!("Success validate lock arm {:?}" , payload.order_side);
+                            // println!("Success validate lock arm {:?}" , payload.order_side);
                             // add
                             let (balance_settle_tx,balance_settle_rx) = bounded::<SettleResult>(1);
                             let order = Order {
@@ -501,7 +491,7 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                 filled: 0
                             };
                             let (executed_qty, order_status, fills, order_id, depth_deltas) = orderbook.add_order(order); // get the fills and change balances
-                            println!("after add_order{:?}" , payload.order_side);
+                            // println!("after add_order{:?}" , payload.order_side);
                             let _ = balance_trasmitter.clone().send(BalanceActions::SettleFills(SettleFillsData {
                                 fills: fills.clone(),
                                 side: payload.order_side.clone(),
@@ -527,21 +517,21 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                     // this thread publishes to client directly- no round trip to engine
                                     
                                     // batch at once. isntead of doing multiple .send for each fill
-                                    let trade_payloads: Vec<TradePublishMsg> = fills.iter().map(|fill| TradePublishMsg {
-                                        symbol: payload.symbol.clone(),
-                                        price: fill.price,
-                                        quantity: fill.quantity,
-                                        order_side: payload.order_side.clone(),
-                                        other_user_id: fill.other_user_id,
-                                        trade_id: fill.trade_id,
-                                    }).collect();
-
-
-                                    // publish to ws
-                                    if !trade_payloads.is_empty() {
-                                        let _ = ws_publisher.send(WsPublisherActions::PublishTrade(TradePublishData {
-                                            trades: trade_payloads 
-                                        }));
+                                    // publish to ws in normal mode only
+                                    if let Some(publisher) = &ws_publisher {
+                                        if !fills.is_empty() {
+                                            let trade_payloads: Vec<TradePublishMsg> = fills.iter().map(|fill| TradePublishMsg {
+                                                symbol: payload.symbol.clone(),
+                                                price: fill.price,
+                                                quantity: fill.quantity,
+                                                order_side: payload.order_side.clone(),
+                                                other_user_id: fill.other_user_id,
+                                                trade_id: fill.trade_id,
+                                            }).collect();
+                                            let _ = publisher.send(WsPublisherActions::PublishTrade(TradePublishData {
+                                                trades: trade_payloads
+                                            }));
+                                        }
                                     }
 
                                     for fill in &fills {
@@ -596,10 +586,12 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                         }));
                                     }
 
-                                    let _ = ws_publisher.send(WsPublisherActions::DepthUpdate(DepthUpdateMsg {
-                                        symbol: payload.symbol,
-                                        depth_deltas
-                                    }));
+                                    if let Some(publisher) = &ws_publisher {
+                                        let _ = publisher.send(WsPublisherActions::DepthUpdate(DepthUpdateMsg {
+                                            symbol: payload.symbol,
+                                            depth_deltas
+                                        }));
+                                    }
                                 }
                             } else {
                                 println!("balance thread recv Error");
@@ -644,10 +636,12 @@ fn spawn_market_thread(market:Market, mut market_publisher: Box<dyn ResultPublis
                                     })).expect("serde error");
                                     market_publisher.complete(client_id, payload_to_send, &origin);
 
-                                    let _ = ws_publisher.send(WsPublisherActions::DepthUpdate(DepthUpdateMsg { 
-                                        symbol: payload.symbol, 
-                                        depth_deltas: vec![depth_delta]
-                                    }));
+                                    if let Some(publisher) = &ws_publisher {
+                                        let _ = publisher.send(WsPublisherActions::DepthUpdate(DepthUpdateMsg {
+                                            symbol: payload.symbol,
+                                            depth_deltas: vec![depth_delta]
+                                        }));
+                                    }
 
                                     if let Some(publisher) = &db_filler_publisher {
                                         let _ = publisher.send(DbFillerActions::PublishOrderStatus(OrderEventData {
@@ -754,7 +748,7 @@ fn spawn_ws_publisher(mut ws_publisher: Box<dyn ResultPublisher>) -> Sender<WsPu
         while let Ok(val) = rx.recv() {
             match val {
                 WsPublisherActions::PublishTrade(data) => {
-                    println!("inside ws publisher thread trade data: {:?}", data);
+                    // println!("inside ws publisher thread trade data: {:?}", data);
                     let channel = format!("trade.{}_{}", data.trades[0].symbol.base.as_str(), data.trades[0].symbol.quote.as_str());
                     for fill in data.trades {
                         let payload = serde_json::to_string(&ToWs::PublishTrade(fill)).expect("error while Serialize");
@@ -762,11 +756,11 @@ fn spawn_ws_publisher(mut ws_publisher: Box<dyn ResultPublisher>) -> Sender<WsPu
                     };
                 },
                 WsPublisherActions::DepthUpdate(data) => {
-                    println!("inside ws publisher thread trade data: {:?}", data);
+                    // println!("inside ws publisher thread trade data: {:?}", data);
                     // get the depth.<symbol>
                     let channel = format!("depth.{}_{}", data.symbol.base.as_str(), data.symbol.quote.as_str());
                     let payload = serde_json::to_string(&ToWs::DepthUpdate(data)).expect("error while Serialize");
-                    println!("after Serializing into string {}", payload);
+                    // println!("after Serializing into string {}", payload);
                     
                     ws_publisher.publish(channel, payload);
                 }
