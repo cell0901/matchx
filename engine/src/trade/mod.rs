@@ -58,7 +58,9 @@ pub enum BalanceActions {
     CancelAndUpdateBalance(Order, Market, Sender<SettleResult>), // using same enum for now
     Onramp(u64, Uuid, String, Origin), // amount, user_id
     Deposit(Asset, u64, Uuid, String, Origin),// asset, qty, user_id
-    GetBalance(Asset, Uuid, String, Origin)
+    GetBalance(Asset, Uuid, String, Origin),
+    // Lets the benchmark wait until pre-funding has been applied.
+    BenchmarkBarrier(Sender<()>),
 }
 
 pub enum ValidateAndLockResponse{

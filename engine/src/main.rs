@@ -19,7 +19,7 @@ async fn main() -> RedisResult<()>{
 
     let client = redis::Client::open(redis_url)?;
 
-    let con = client.get_multiplexed_async_connection().await.expect("some error occured while getting connection"); 
+    let con = client.get_multiplexed_async_connection().await.expect("some error occured while getting Redis connection"); 
     let engine = Engine::new(con, client.clone(), false);
 
     let stream_client = client.clone();

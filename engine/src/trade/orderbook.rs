@@ -105,7 +105,6 @@ impl Orderbook{
             },
             OrderType::Market => {
                 // IOC. if no order otherside then Cancelled. else partial and full fills.
-                println!("market order hit");
                 return self.fill_market_order(order)
             }
        };
@@ -217,9 +216,7 @@ impl Orderbook{
             OrderSide::Sell => {
                 let mut order_status = OrderStatus::New;
 
-                println!("sell order came {}", order.quantity);
                 let (executed_qty, fills, mut deltas) = self.match_ask(order.clone()); 
-                println!("sell order after match ask{}", order.quantity);
                 if executed_qty == order.quantity {
                     return (executed_qty, OrderStatus::Filled, fills, order.order_id, deltas);
                 }
@@ -376,7 +373,6 @@ impl Orderbook{
 
                 
                 remaining_quantity -= trade_qty;
-                println!("sell order resting_bid: {:?} and trade_qty {:?}", resting_bid, trade_qty);
                 resting_bid.filled += trade_qty;
 
                 if resting_bid.quantity == resting_bid.filled { // fully filled resting order.
@@ -415,8 +411,6 @@ impl Orderbook{
             OrderSide::Buy => &mut self.bids,
             OrderSide::Sell=> &mut self.asks,
         };
-
-        println!("after finding side");
 
         let level = side.get_mut(&location.price).ok_or(OrderCancelError::OrderNotFound)?; // this should
         // exist. because we already add a check before to check in order_index

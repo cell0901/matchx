@@ -73,7 +73,14 @@ Market orders may omit `price`; limit orders require it.
 
 Protected endpoints require the authentication middleware configured by the HTTP service.
 
+## Engine throughput benchmark
+
+Run from `engine/` with `cargo bench --bench engine_throughput`. No Redis or Postgres is needed.
+
+The benchmark sends 1,000 matched limit-order pairs per active market and reports completed orders per second for one versus four active market threads. It pre-funds users before timing and counts an order only after the balance actor confirms settlement. Each pair produces one fill, so fills per second is half the reported orders per second for this workload. Redis, WebSocket, database publishing, and HTTP are excluded; this is actor-level engine throughput, not end-to-end exchange throughput.
+
+In a local run, the benchmark measured approximately **37,000 completed orders/sec with one active market** and **256,000 completed orders/sec across four active markets**. Results vary with hardware and system load.
+
 ### Remaining:
 
-- Add engine-only benchmarks for order matching, settlement, and depth updates.
-- End-to-end benchmarks covering HTTP, Redis, and engine.
+- Add end-to-end benchmarks covering HTTP, Redis, engine, and database persistence.

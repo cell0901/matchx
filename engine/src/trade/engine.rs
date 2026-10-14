@@ -211,6 +211,39 @@ impl Engine {
     }
 }
 
+// Runs the same balance and market actors without Redis, WS, or DB publishing.
+// Each market response sends true for a placed order and false for a rejection.
+pub fn spawn_benchmark_actors(
+    completed: Sender<bool>,
+) -> (HashMap<Market, Sender<OrderbookActions>>, Sender<BalanceActions>) {
+    let balance_sender = spawn_balance_thread(Box::new(NullPublisher));
+    let market_senders = MARKETS
+        .into_iter()
+        .map(|market| {
+            let publisher = Box::new(BenchmarkPublisher {
+                completed: completed.clone(),
+            });
+            let sender = spawn_market_thread(market, publisher, balance_sender.clone(), None, None);
+            (market, sender)
+        })
+        .collect();
+
+    (market_senders, balance_sender)
+}
+
+struct BenchmarkPublisher {
+    completed: Sender<bool>,
+}
+
+impl ResultPublisher for BenchmarkPublisher {
+    fn complete(&mut self, _client_id: String, payload: String, _origin: &Origin) {
+        let placed = payload.starts_with("{\"OrderPlaced\":");
+        self.completed.send(placed).expect("benchmark completion receiver dropped");
+    }
+
+    fn publish(&mut self, _client_id: String, _payload: String) {}
+}
+
 fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Sender<BalanceActions> {
     let (tx, rx) = unbounded::<BalanceActions>();
 
@@ -410,6 +443,9 @@ fn spawn_balance_thread(mut balance_publisher: Box<dyn ResultPublisher>) -> Send
                             balance_publisher.complete(client_id, payload, &origin);
                         }
                     }
+                },
+                BalanceActions::BenchmarkBarrier(done) => {
+                    let _ = done.send(());
                 }
             }; 
         }
