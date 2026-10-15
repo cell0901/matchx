@@ -85,6 +85,14 @@ In a local run, the benchmark measured approximately **37,000 completed orders/s
 
 The k6 order-flow test measures the client-response path: HTTP → Redis → engine → HTTP. It reports accepted order throughput, client-observed latency, and failures. Database persistence and WebSocket delivery are outside its scope.
 
+With Redis, Postgres, HTTP, and engine running, run this from the repository root:
+
+```bash
+k6 run -e PAIRS_PER_SECOND=200 -e DURATION_SECONDS=120 \
+  -e MARKETS=SOL_USDC,BTC_USDC,ETH_USDC,HYPE_USDC \
+  benchmarks/order_flow.js
+```
+
 In a local two-minute run across four markets, k6 offered **200 matched pairs/s (~400 orders/s)**. All **48,002 orders** received the expected responses, with **zero failed HTTP requests** and **zero dropped iterations**. `/order` latency was **11.3 ms at p95** and **14.92 ms at p99**.
 
 Before timing begins, the script creates and funds test users. It starts 200 iterations per second, cycling through the four markets. Each iteration submits a limit sell order, waits for its response, then submits a matching buy order. The run checks order acceptance, HTTP failures, dropped iterations, and response latency; p95 of 11.3 ms means 95% of `/order` requests completed within 11.3 ms at this offered load.
