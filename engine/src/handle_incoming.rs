@@ -3,9 +3,10 @@ use redis::{AsyncCommands, AsyncConnectionConfig, Client, Value, streams::{Strea
 use crate::{error::EngineError, trade::{Engine}, types::EngineMessage};
 
 pub async fn handle_stream(client: Client, engine: Engine) -> Result<(), EngineError>{
-    let mut con = client.get_multiplexed_async_connection().await?; // using async connection to
-    // avoid blocking io
-
+    let config = AsyncConnectionConfig::new().set_response_timeout(None);
+    let mut con = client
+        .get_multiplexed_async_connection_with_config(&config)
+        .await?;
     // diff between default xgropu create is that this one creates the stream if it doesnt
     // exists instead of panic
     let _: Result<(), _> = con.xgroup_create_mkstream("order:stream", "engine_group", "$").await; // $
@@ -26,7 +27,7 @@ pub async fn handle_stream(client: Client, engine: Engine) -> Result<(), EngineE
                 match data {
                     Value::BulkString(val) => {
                         let message: EngineMessage= serde_json::from_slice(&val).unwrap();
-                        println!("message came inside handle_stream");
+                        // println!("message came inside handle_stream");
                         engine.process(message.data, message.client_id, Some(entry.id)).await;
                         // publish to pubsub the repsonse
                     },
@@ -61,7 +62,7 @@ pub async fn handle_queue(client: Client, engine:Engine)-> Result<(), EngineErro
         if let Some((_, message)) = res {
             let message: EngineMessage = serde_json::from_str(&message)?;
 
-            println!("message came inside queue");
+            // println!("message came inside queue");
 
             engine
                 .process(message.data, message.client_id, None)
