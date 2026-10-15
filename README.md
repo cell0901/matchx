@@ -1,6 +1,6 @@
 # Exchange
 
-A Rust exchange with separate HTTP, matching-engine, WebSocket, and database-writer services. The matching engine runs a dedicated synchronous orderbook thread for each market.
+A multithreaded exchange built in Rust, with a dedicated orderbook thread per market and separate services for the API, real-time feeds, and persistence.
 
 The engine keeps matching and balance updates in memory, Redis carries commands and events between services, and Postgres stores executed trades and order state.
 
