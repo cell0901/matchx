@@ -37,6 +37,7 @@ pub async fn signup(body: Json<UserSignup>, data: web::Data<DatabaseConnection>)
         // TODO hash the password
         password: Set(body.password.clone())
     };
+    println!("signup hit with {:?}", body);
 
     // returns read only database updates model
     let res= a.insert(&**data).await; 

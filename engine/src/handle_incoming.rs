@@ -3,7 +3,8 @@ use redis::{AsyncCommands, AsyncConnectionConfig, Client, Value, streams::{Strea
 use crate::{error::EngineError, trade::{Engine}, types::EngineMessage};
 
 pub async fn handle_stream(client: Client, engine: Engine) -> Result<(), EngineError>{
-    let config = AsyncConnectionConfig::new().set_response_timeout(None);
+    let config = AsyncConnectionConfig::new().set_response_timeout(None); // since redis default
+    // connection give 500 ms default timeout to fix we set this 
     let mut con = client
         .get_multiplexed_async_connection_with_config(&config)
         .await?;
